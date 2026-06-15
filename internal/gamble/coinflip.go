@@ -98,7 +98,6 @@ func (g *coinflipGame) onResult(msg Message) {
 	if !strings.Contains(lower, "chose") {
 		return
 	}
-	g.m.bot.Debug("Coinflip result: " + msg.Content)
 
 	stop := g.m.stopChan()
 	if strings.Contains(lower, "and you lost it all") {
