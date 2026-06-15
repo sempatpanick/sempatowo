@@ -113,7 +113,7 @@ func (m *Manager) decideBet(game config.GambleGame, turnsLost int, buildText fun
 	gs := settings.GoalSystem
 	if gs.Enabled && gain > gs.Amount {
 		if !m.flagGoalReached(true) {
-			m.bot.Log("goal reached - " + itoa(gain) + "/" + itoa(gs.Amount) + ", pausing gamble")
+			m.bot.Log("goal reached - " + logAmt(gain) + "/" + logAmt(gs.Amount) + ", pausing gamble")
 		}
 		return betDecision{pause: true}
 	}
@@ -123,27 +123,27 @@ func (m *Manager) decideBet(game config.GambleGame, turnsLost int, buildText fun
 
 	if m.bot.CashCheck() && checkedCash && amount > balance {
 		if !m.flagNoBalance(true) {
-			m.bot.Log("bet " + itoa(amount) + " exceeds balance " + itoa(balance) + ", pausing gamble")
+			m.bot.Log("bet " + logAmt(amount) + " exceeds balance " + logAmt(balance) + ", pausing gamble")
 		}
 		return betDecision{pause: true}
 	}
 	if m.bot.CashCheck() && checkedCash {
 		if m.flagNoBalance(false) {
-			m.bot.Log("balance regained (" + itoa(balance) + ") — resuming gamble")
+			m.bot.Log("balance regained (" + logAmt(balance) + ") — resuming gamble")
 		}
 	}
 
 	allotted := settings.AllottedAmount
 	if gain+(allotted-amount) <= 0 {
 		if !m.flagAmountExceeded(true) {
-			m.bot.Log("allotted value " + itoa(allotted) + " exceeded, pausing gamble")
+			m.bot.Log("allotted value " + logAmt(allotted) + " exceeded, pausing gamble")
 		}
 		return betDecision{pause: true}
 	}
 	m.flagAmountExceeded(false)
 
 	if amount > maxBetAmount {
-		m.bot.Log("bet " + itoa(amount) + " exceeded 250k limit, stopping gamble")
+		m.bot.Log("bet " + logAmt(amount) + " exceeded 250k limit, stopping gamble")
 		return betDecision{stop: true}
 	}
 
@@ -175,6 +175,10 @@ func (m *Manager) flagAmountExceeded(v bool) bool {
 }
 
 func itoa(n int) string {
+	return strconv.Itoa(n)
+}
+
+func logAmt(n int) string {
 	return util.FormatInt(n)
 }
 

@@ -114,7 +114,7 @@ func (g *coinflipGame) onResult(msg Message) {
 		}
 		g.m.state.addGain(-lose)
 		gain, _, _ := g.m.state.snapshot()
-		g.m.bot.Log("Coinflip → lost " + itoa(lose) + " (net " + itoa(gain) + ")")
+		g.m.bot.Log("Coinflip → lost " + logAmt(lose) + " (net " + logAmt(gain) + ")")
 		g.m.bot.SignalGambleResult(QueueCoinflip)
 		g.scheduleNext(stop)
 		return
@@ -135,7 +135,7 @@ func (g *coinflipGame) onResult(msg Message) {
 	}
 	g.m.state.addGain(profit)
 	gain, _, _ := g.m.state.snapshot()
-	g.m.bot.Log("Coinflip → won " + itoa(won) + " (net " + itoa(gain) + ")")
+	g.m.bot.Log("Coinflip → won " + logAmt(won) + " (net " + logAmt(gain) + ")")
 	g.m.bot.SignalGambleResult(QueueCoinflip)
 	g.scheduleNext(stop)
 }

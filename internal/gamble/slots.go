@@ -109,7 +109,7 @@ func (g *slotsGame) onResult(msg Message) {
 		}
 		g.m.state.addGain(-bet)
 		gain, _, _ := g.m.state.snapshot()
-		g.m.bot.Log("Slots → lost " + itoa(bet) + " (net " + itoa(gain) + ")")
+		g.m.bot.Log("Slots → lost " + logAmt(bet) + " (net " + logAmt(gain) + ")")
 		g.m.bot.SignalGambleResult(QueueSlots)
 		g.scheduleNext(stop)
 		return
@@ -135,7 +135,7 @@ func (g *slotsGame) onResult(msg Message) {
 			g.mu.Lock()
 			g.awaitingResult = false
 			g.mu.Unlock()
-			g.m.bot.Log("Slots → draw " + itoa(bet))
+			g.m.bot.Log("Slots → draw " + logAmt(bet))
 			g.m.bot.SignalGambleResult(QueueSlots)
 			g.scheduleNext(stop)
 			return
@@ -150,7 +150,7 @@ func (g *slotsGame) onResult(msg Message) {
 		}
 		g.m.state.addGain(profit)
 		gain, _, _ := g.m.state.snapshot()
-		g.m.bot.Log("Slots → won " + itoa(won) + " (net " + itoa(gain) + ")")
+		g.m.bot.Log("Slots → won " + logAmt(won) + " (net " + logAmt(gain) + ")")
 		g.m.bot.SignalGambleResult(QueueSlots)
 		g.scheduleNext(stop)
 	}

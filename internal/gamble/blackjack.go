@@ -191,7 +191,7 @@ func (g *blackjackGame) onUpdate(msg Message) {
 			}
 			g.m.state.addGain(-amt)
 			gain, _, _ := g.m.state.snapshot()
-			g.m.bot.Log("Blackjack → lost " + itoa(amt) + " (net " + itoa(gain) + ")")
+			g.m.bot.Log("Blackjack → lost " + logAmt(amt) + " (net " + logAmt(gain) + ")")
 			g.scheduleNext(stop)
 
 		case strings.Contains(ft, "You won"):
@@ -208,7 +208,7 @@ func (g *blackjackGame) onUpdate(msg Message) {
 			}
 			g.m.state.addGain(amt)
 			gain, _, _ := g.m.state.snapshot()
-			g.m.bot.Log("Blackjack → won " + itoa(amt) + " (net " + itoa(gain) + ")")
+			g.m.bot.Log("Blackjack → won " + logAmt(amt) + " (net " + logAmt(gain) + ")")
 			g.scheduleNext(stop)
 
 		case strings.Contains(ft, "You tied!") || strings.Contains(ft, "You both bust!"):

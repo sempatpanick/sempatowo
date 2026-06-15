@@ -118,7 +118,7 @@ func (m *Manager) HandleCash(content, nick string) {
 	}
 	m.state.updateCash(amt, true, false)
 	m.state.setCheckedCash()
-	m.bot.Log("Balance → " + itoa(amt))
+	m.bot.Log("Balance → " + logAmt(amt))
 }
 
 // UpdateBalance sets or adjusts the tracked cowoncy balance (e.g. after daily reward).
