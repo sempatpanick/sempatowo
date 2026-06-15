@@ -191,6 +191,11 @@ func (b *Bot) onMessage(msg *discord.Message) {
 		return
 	}
 
+	// Captcha must be handled before isForMe / gamble — stops farm immediately.
+	if b.tryHandleCaptcha(msg, content) {
+		return
+	}
+
 	nick := b.nickname(msg)
 	if msg.ChannelID.String() == s.Channels.Hunt && !b.captchaSolving {
 		b.handleGambleMessage(msg)
@@ -202,13 +207,6 @@ func (b *Bot) onMessage(msg *discord.Message) {
 
 	b.handleDailyMessage(msg, nick)
 	b.handleAutoQuestMessage(msg, nick)
-
-	uid := b.userID()
-	if uid != "" && isCaptcha(content, msg, uid) {
-		b.logDanger("Captcha detected")
-		b.handleCaptcha()
-		return
-	}
 
 	if b.captchaSolving {
 		return
@@ -223,19 +221,30 @@ func (b *Bot) onMessage(msg *discord.Message) {
 }
 
 func (b *Bot) onMessageUpdate(msg *discord.Message) {
-	if msg == nil || b.captchaSolving || b.gamble == nil {
+	if msg == nil || b.captchaSolving {
 		return
 	}
 	s := b.settings()
-	if msg.ChannelID.String() != s.Channels.Hunt {
+	ch := msg.ChannelID.String()
+	if ch != s.Channels.Hunt && msg.GuildID != 0 {
 		return
 	}
 	// MESSAGE_UPDATE often omits author; OwO edits in the hunt channel are still ours.
 	if msg.Author != nil && msg.Author.ID.String() != s.OwoID {
 		return
 	}
+
+	content := normalizeZW(msg.Content)
+	if b.tryHandleCaptcha(msg, content) {
+		return
+	}
+
+	if b.gamble == nil {
+		return
+	}
+
 	gm := b.toGambleMessage(msg)
-	gm.Content = normalizeZW(msg.Content)
+	gm.Content = content
 	if gm.AuthorID == "" {
 		gm.AuthorID = s.OwoID
 	}
@@ -248,7 +257,6 @@ func (b *Bot) onMessageUpdate(msg *discord.Message) {
 	if !b.isForMe(msg, nick) {
 		return
 	}
-	content := normalizeZW(msg.Content)
 	if shouldSkipOwOLog(content) {
 		return
 	}
@@ -339,23 +347,6 @@ func isVerificationSuccess(content string) bool {
 		strings.Contains(lower, "thank you!") ||
 		strings.Contains(content, "Thank you! :3") ||
 		strings.Contains(content, "👍")
-}
-
-func isCaptcha(content string, msg *discord.Message, uid string) bool {
-	if uid == "" || msg == nil {
-		return false
-	}
-	if strings.Contains(strings.ToLower(content), "please complete your captcha to verify that you are human") {
-		return true
-	}
-	mentioned := strings.Contains(content, uid)
-	for _, u := range msg.Mentions {
-		if u != nil && u.ID.String() == uid {
-			mentioned = true
-		}
-	}
-	pattern := regexp.MustCompile(`(?i)(human|captcha|dm|banned|https://owobot.com/captcha)`)
-	return pattern.MatchString(content) && mentioned
 }
 
 func (b *Bot) canSendLocked() bool {
