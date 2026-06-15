@@ -1,0 +1,38 @@
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+
+# Per-account config (created on first run)
+config/*.json
+
+# Runtime data
+data/
+
+# Browser profiles for captcha solving
+browser-profiles/
+
+# Go build output
+/sempatowo
+/sempatowo.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# IDE / OS
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
