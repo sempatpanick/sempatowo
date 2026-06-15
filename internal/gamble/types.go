@@ -1,8 +1,13 @@
 package gamble
 
-import "github.com/sempatowo/sempatowo/internal/config"
+import "github.com/semptpanick/sempatowo/internal/config"
 
 const maxBetAmount = 250_000
+
+const (
+	QueueCoinflip = "coinflip"
+	QueueSlots    = "slots"
+)
 
 const (
 	briefCooldownMin = 0.7
@@ -55,8 +60,11 @@ type BotContext interface {
 	Gamble() config.Gamble
 	RandomPrefix(commands []string) string
 	SendMessage(channelID, text string) error
+	SendGambleBet(channelID, game, text string) error
+	SignalGambleResult(game string)
 	CanSend() bool
 	Log(msg string)
+	Debug(msg string)
 	Sleep(seconds float64)
 	AddReaction(channelID, messageID, emoji string) error
 	RemoveReaction(channelID, messageID, emoji string) error

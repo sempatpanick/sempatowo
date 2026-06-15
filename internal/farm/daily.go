@@ -2,7 +2,7 @@ package farm
 
 import (
 	discord "github.com/hytams/discordgo-self"
-	"github.com/sempatowo/sempatowo/internal/daily"
+	"github.com/semptpanick/sempatowo/internal/daily"
 )
 
 type dailyCtx struct {

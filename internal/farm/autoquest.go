@@ -8,8 +8,9 @@ import (
 	"time"
 
 	discord "github.com/hytams/discordgo-self"
-	"github.com/sempatowo/sempatowo/internal/config"
-	"github.com/sempatowo/sempatowo/internal/quest"
+	"github.com/semptpanick/sempatowo/internal/config"
+	"github.com/semptpanick/sempatowo/internal/gamble"
+	"github.com/semptpanick/sempatowo/internal/quest"
 )
 
 type autoQuestCtx struct {
@@ -125,14 +126,16 @@ func (c *autoQuestCtx) ClickButton(channelID, messageID, customID, applicationID
 }
 func (c *autoQuestCtx) GambleEnqueue(game string, amount int) {
 	ch := c.bot.settings().Channels.Hunt
-	var text string
+	var text, qGame string
 	switch game {
 	case "slots":
+		qGame = gamble.QueueSlots
 		text = c.bot.randomPrefix([]string{"s", "slots"}) + " " + strconv.Itoa(amount)
 	default:
+		qGame = gamble.QueueCoinflip
 		text = c.bot.randomPrefix([]string{"cf", "coinflip"}) + " " + strconv.Itoa(amount)
 	}
-	c.bot.enqueue(ch, text)
+	c.bot.enqueueGambleBet(ch, text, qGame)
 }
 
 func (b *Bot) startAutoQuestIfNeeded() {

@@ -54,6 +54,12 @@ func (b *Bot) logDanger(msg string) {
 	}
 }
 
+func (b *Bot) logDebug(msg string) {
+	if b != nil && b.log != nil {
+		b.log.Debug(msg)
+	}
+}
+
 func embedContainsSafe(embed *discord.Embed, name string) bool {
 	if embed == nil || name == "" {
 		return false

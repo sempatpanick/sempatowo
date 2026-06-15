@@ -4,8 +4,8 @@ import (
 	"time"
 
 	discord "github.com/hytams/discordgo-self"
-	"github.com/sempatowo/sempatowo/internal/config"
-	"github.com/sempatowo/sempatowo/internal/gamble"
+	"github.com/semptpanick/sempatowo/internal/config"
+	"github.com/semptpanick/sempatowo/internal/gamble"
 )
 
 func (b *Bot) toGambleMessage(msg *discord.Message) gamble.Message {
@@ -87,8 +87,16 @@ func (c *gambleCtx) SendMessage(channelID, text string) error {
 	c.bot.enqueue(channelID, text)
 	return nil
 }
+func (c *gambleCtx) SendGambleBet(channelID, game, text string) error {
+	c.bot.enqueueGambleBet(channelID, text, game)
+	return nil
+}
+func (c *gambleCtx) SignalGambleResult(game string) {
+	c.bot.signalGambleResult(game)
+}
 func (c *gambleCtx) CanSend() bool { return c.bot.canSend() }
 func (c *gambleCtx) Log(msg string) { c.bot.logInfo(msg) }
+func (c *gambleCtx) Debug(msg string) { c.bot.logDebug(msg) }
 func (c *gambleCtx) Sleep(seconds float64) {
 	if seconds > 0 {
 		time.Sleep(time.Duration(seconds * float64(time.Second)))

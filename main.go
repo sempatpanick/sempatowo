@@ -8,7 +8,7 @@ import (
 	"syscall"
 
 	"github.com/joho/godotenv"
-	"github.com/sempatowo/sempatowo/internal/farm"
+	"github.com/semptpanick/sempatowo/internal/farm"
 )
 
 func main() {

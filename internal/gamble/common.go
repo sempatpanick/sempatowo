@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sempatowo/sempatowo/internal/config"
+	"github.com/semptpanick/sempatowo/internal/config"
 )
 
 var commaAmountRe = regexp.MustCompile(`([\d,]+)`)
@@ -64,6 +64,20 @@ func parseCommaAmount(s string) (int, bool) {
 	}
 	n, err := strconv.Atoi(strings.ReplaceAll(m[1], ",", ""))
 	return n, err == nil
+}
+
+// parseRegexAmount returns the first non-empty capture group from re in content.
+func parseRegexAmount(re *regexp.Regexp, content string) (int, bool) {
+	m := re.FindStringSubmatch(content)
+	if m == nil {
+		return 0, false
+	}
+	for i := 1; i < len(m); i++ {
+		if m[i] != "" {
+			return parseCommaAmount(m[i])
+		}
+	}
+	return 0, false
 }
 
 func randomBetween(min, max float64) float64 {

@@ -1,6 +1,6 @@
 package huntbot
 
-import "github.com/sempatowo/sempatowo/internal/config"
+import "github.com/semptpanick/sempatowo/internal/config"
 
 type Trait string
 

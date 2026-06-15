@@ -7,8 +7,9 @@ import (
 )
 
 var (
-	cfWonRe  = regexp.MustCompile(`(?i)you won \*\*<:cowoncy:\d+> ([\d,]+)`)
-	cfLoseRe = regexp.MustCompile(`(?i)spent \*\*<:cowoncy:\d+> ([\d,]+)`)
+	// Bet amount comes after <:emoji:id> or is wrapped in **...** — not the emoji snowflake ID.
+	cfWonRe  = regexp.MustCompile(`(?i)you won(?:[^>]*>\s*\*?\*?([\d,]+)|\*\*([\d,]+)\*\*)`)
+	cfLoseRe = regexp.MustCompile(`(?i)spent(?:[^>]*>\s*\*?\*?([\d,]+)|\*\*([\d,]+)\*\*)`)
 )
 
 type coinflipGame struct {
@@ -62,7 +63,7 @@ func (g *coinflipGame) run(stop <-chan struct{}, startup bool) {
 			g.awaitingResult = true
 			g.mu.Unlock()
 			g.m.bot.Log("Coinflip: " + dec.text)
-			g.m.bot.SendMessage(g.m.bot.HuntChannelID(), dec.text)
+			g.m.bot.SendGambleBet(g.m.bot.HuntChannelID(), QueueCoinflip, dec.text)
 			return
 		}
 	}
@@ -97,10 +98,11 @@ func (g *coinflipGame) onResult(msg Message) {
 	if !strings.Contains(lower, "chose") {
 		return
 	}
+	g.m.bot.Debug("Coinflip result: " + msg.Content)
 
 	stop := g.m.stopChan()
 	if strings.Contains(lower, "and you lost it all") {
-		lose, ok := parseCommaAmount(cfLoseRe.FindString(msg.Content))
+		lose, ok := parseRegexAmount(cfLoseRe, msg.Content)
 		if !ok {
 			return
 		}
@@ -114,17 +116,13 @@ func (g *coinflipGame) onResult(msg Message) {
 		g.m.state.addGain(-lose)
 		gain, _, _ := g.m.state.snapshot()
 		g.m.bot.Log("lost " + itoa(lose) + " in cf, net profit " + itoa(gain))
+		g.m.bot.SignalGambleResult(QueueCoinflip)
 		g.scheduleNext(stop)
 		return
 	}
 
-	wonStr := cfWonRe.FindString(msg.Content)
-	loseStr := cfLoseRe.FindString(msg.Content)
-	if wonStr == "" || loseStr == "" {
-		return
-	}
-	won, ok1 := parseCommaAmount(wonStr)
-	lose, ok2 := parseCommaAmount(loseStr)
+	won, ok1 := parseRegexAmount(cfWonRe, msg.Content)
+	lose, ok2 := parseRegexAmount(cfLoseRe, msg.Content)
 	if !ok1 || !ok2 {
 		return
 	}
@@ -139,5 +137,6 @@ func (g *coinflipGame) onResult(msg Message) {
 	g.m.state.addGain(profit)
 	gain, _, _ := g.m.state.snapshot()
 	g.m.bot.Log("won " + itoa(won) + " in cf, net profit " + itoa(gain))
+	g.m.bot.SignalGambleResult(QueueCoinflip)
 	g.scheduleNext(stop)
 }

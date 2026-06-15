@@ -4,7 +4,7 @@ import (
 	"math"
 	"math/rand"
 
-	"github.com/sempatowo/sempatowo/internal/config"
+	"github.com/semptpanick/sempatowo/internal/config"
 )
 
 type traitFormula struct {

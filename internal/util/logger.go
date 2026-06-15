@@ -13,6 +13,7 @@ const (
 	magenta = "\033[95m"
 	green   = "\033[92m"
 	red     = "\033[91m"
+	cyan    = "\033[96m"
 )
 
 // Logger prints colored tagged log lines to stdout.
@@ -56,6 +57,15 @@ func (l *Logger) Danger(msg string) {
 		l.paint(yellow, now),
 		l.paint(magenta, "["+l.tag()+"]"),
 		l.paint(red, msg),
+	)
+}
+
+func (l *Logger) Debug(msg string) {
+	now := time.Now().Format("15:04:05")
+	fmt.Printf("%s %s: %s\n",
+		l.paint(yellow, now),
+		l.paint(magenta, "["+l.tag()+"]"),
+		l.paint(cyan, msg),
 	)
 }
 

@@ -1,4 +1,4 @@
-module github.com/sempatowo/sempatowo
+module github.com/semptpanick/sempatowo
 
 go 1.25.3
 

@@ -7,8 +7,9 @@ import (
 )
 
 var (
-	slotsWonRe  = regexp.MustCompile(`(?i)and won <:cowoncy:\d+> ([\d,]+)`)
-	slotsLoseRe = regexp.MustCompile(`(?i)bet <:cowoncy:\d+> ([\d,]+)`)
+	// Amount comes after <:emoji:id>, not the snowflake ID inside the emoji.
+	slotsWonRe = regexp.MustCompile(`(?i)and won(?:[^>]*>\s*\*?\*?([\d,]+)|\*\*([\d,]+)\*\*)`)
+	slotsBetRe = regexp.MustCompile(`(?i)bet(?:[^>]*>\s*\*?\*?([\d,]+)|\*\*([\d,]+)\*\*)`)
 )
 
 type slotsGame struct {
@@ -57,7 +58,7 @@ func (g *slotsGame) run(stop <-chan struct{}, startup bool) {
 			g.awaitingResult = true
 			g.mu.Unlock()
 			g.m.bot.Log("Slots: " + dec.text)
-			g.m.bot.SendMessage(g.m.bot.HuntChannelID(), dec.text)
+			g.m.bot.SendGambleBet(g.m.bot.HuntChannelID(), QueueSlots, dec.text)
 			return
 		}
 	}
@@ -94,8 +95,8 @@ func (g *slotsGame) onResult(msg Message) {
 	}
 
 	stop := g.m.stopChan()
-	if strings.Contains(msg.Content, "and won nothing... :c") {
-		lose, ok := parseCommaAmount(slotsLoseRe.FindString(msg.Content))
+	if strings.Contains(lower, "and won nothing") {
+		bet, ok := parseRegexAmount(slotsBetRe, msg.Content)
 		if !ok {
 			return
 		}
@@ -104,11 +105,12 @@ func (g *slotsGame) onResult(msg Message) {
 		g.turnsLost++
 		g.mu.Unlock()
 		if g.m.bot.CashCheck() {
-			g.m.state.updateCash(lose, false, true)
+			g.m.state.updateCash(bet, false, true)
 		}
-		g.m.state.addGain(-lose)
+		g.m.state.addGain(-bet)
 		gain, _, _ := g.m.state.snapshot()
-		g.m.bot.Log("lost " + itoa(lose) + " in slots, net profit " + itoa(gain))
+		g.m.bot.Log("lost " + itoa(bet) + " in slots, net profit " + itoa(gain))
+		g.m.bot.SignalGambleResult(QueueSlots)
 		g.scheduleNext(stop)
 		return
 	}
@@ -118,17 +120,27 @@ func (g *slotsGame) onResult(msg Message) {
 		g.awaitingResult = false
 		g.mu.Unlock()
 		g.m.bot.Log("slots: no win or loss")
+		g.m.bot.SignalGambleResult(QueueSlots)
 		g.scheduleNext(stop)
 		return
 	}
 
 	if strings.Contains(lower, "and won") {
-		won, ok1 := parseCommaAmount(slotsWonRe.FindString(msg.Content))
-		lose, ok2 := parseCommaAmount(slotsLoseRe.FindString(msg.Content))
+		won, ok1 := parseRegexAmount(slotsWonRe, msg.Content)
+		bet, ok2 := parseRegexAmount(slotsBetRe, msg.Content)
 		if !ok1 || !ok2 {
 			return
 		}
-		profit := won - lose
+		if won == bet {
+			g.mu.Lock()
+			g.awaitingResult = false
+			g.mu.Unlock()
+			g.m.bot.Log("slots: draw (" + itoa(bet) + ")")
+			g.m.bot.SignalGambleResult(QueueSlots)
+			g.scheduleNext(stop)
+			return
+		}
+		profit := won - bet
 		g.mu.Lock()
 		g.awaitingResult = false
 		g.turnsLost = 0
@@ -139,6 +151,7 @@ func (g *slotsGame) onResult(msg Message) {
 		g.m.state.addGain(profit)
 		gain, _, _ := g.m.state.snapshot()
 		g.m.bot.Log("won " + itoa(won) + " in slots, net profit " + itoa(gain))
+		g.m.bot.SignalGambleResult(QueueSlots)
 		g.scheduleNext(stop)
 	}
 }

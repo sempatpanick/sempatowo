@@ -12,22 +12,25 @@ import (
 	"time"
 
 	discord "github.com/hytams/discordgo-self"
-	"github.com/sempatowo/sempatowo/internal/captcha"
-	"github.com/sempatowo/sempatowo/internal/config"
-	"github.com/sempatowo/sempatowo/internal/daily"
-	"github.com/sempatowo/sempatowo/internal/gamble"
-	"github.com/sempatowo/sempatowo/internal/huntbot"
-	"github.com/sempatowo/sempatowo/internal/items"
-	"github.com/sempatowo/sempatowo/internal/notify"
-	"github.com/sempatowo/sempatowo/internal/quest"
-	"github.com/sempatowo/sempatowo/internal/util"
+	"github.com/semptpanick/sempatowo/internal/captcha"
+	"github.com/semptpanick/sempatowo/internal/config"
+	"github.com/semptpanick/sempatowo/internal/daily"
+	"github.com/semptpanick/sempatowo/internal/gamble"
+	"github.com/semptpanick/sempatowo/internal/huntbot"
+	"github.com/semptpanick/sempatowo/internal/items"
+	"github.com/semptpanick/sempatowo/internal/notify"
+	"github.com/semptpanick/sempatowo/internal/quest"
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 const captchaDeadline = 10 * time.Minute
 
+const gambleResultWait = 8 * time.Second
+
 type queuedMsg struct {
-	channel string
-	text    string
+	channel    string
+	text       string
+	waitGamble string // "coinflip" or "slots" — pause queue until result
 }
 
 // Bot automates OwO farming for one Discord account.
@@ -51,6 +54,10 @@ type Bot struct {
 	queue       []queuedMsg
 	queueStop   chan struct{}
 	queueRunning bool
+
+	gambleWaitMu   sync.Mutex
+	gambleWaitCh   chan struct{}
+	gambleWaitGame string
 
 	cmdHeap      cmdHeap
 	cmdSeq       uint64
@@ -849,6 +856,18 @@ func (b *Bot) enqueue(channel, text string) {
 	}
 }
 
+func (b *Bot) enqueueGambleBet(channel, text, game string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.canSendLocked() || channel == "" || text == "" || game == "" {
+		return
+	}
+	b.queue = append(b.queue, queuedMsg{channel: channel, text: text, waitGamble: game})
+	if b.queueStop == nil {
+		b.startQueueLocked()
+	}
+}
+
 func (b *Bot) startQueueLocked() {
 	// Caller must hold b.mu.
 	if b.queueRunning {
@@ -887,6 +906,10 @@ func (b *Bot) runQueue(stop <-chan struct{}) {
 		}
 		b.send(msg.channel, msg.text, false)
 
+		if msg.waitGamble != "" {
+			b.waitGambleResult(msg.waitGamble, gambleResultWait, stop)
+		}
+
 		timer := time.NewTimer(interval)
 		select {
 		case <-stop:
@@ -894,6 +917,44 @@ func (b *Bot) runQueue(stop <-chan struct{}) {
 			return
 		case <-timer.C:
 		}
+	}
+}
+
+func (b *Bot) waitGambleResult(game string, timeout time.Duration, stop <-chan struct{}) {
+	ch := make(chan struct{})
+	b.gambleWaitMu.Lock()
+	b.gambleWaitCh = ch
+	b.gambleWaitGame = game
+	b.gambleWaitMu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-ch:
+	case <-timer.C:
+	case <-stop:
+	}
+
+	b.gambleWaitMu.Lock()
+	if b.gambleWaitCh == ch {
+		b.gambleWaitCh = nil
+		b.gambleWaitGame = ""
+	}
+	b.gambleWaitMu.Unlock()
+}
+
+func (b *Bot) signalGambleResult(game string) {
+	b.gambleWaitMu.Lock()
+	if b.gambleWaitGame != game {
+		b.gambleWaitMu.Unlock()
+		return
+	}
+	ch := b.gambleWaitCh
+	b.gambleWaitCh = nil
+	b.gambleWaitGame = ""
+	b.gambleWaitMu.Unlock()
+	if ch != nil {
+		close(ch)
 	}
 }
 

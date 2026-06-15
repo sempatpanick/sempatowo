@@ -1,6 +1,6 @@
 package quest
 
-import "github.com/sempatowo/sempatowo/internal/config"
+import "github.com/semptpanick/sempatowo/internal/config"
 
 // ParsedQuest is one row from the quest OCR image.
 type ParsedQuest struct {

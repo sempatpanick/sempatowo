@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sempatowo/sempatowo/internal/util"
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 const (
@@ -18,7 +18,7 @@ const (
 )
 
 var (
-	dailyRewardRe = regexp.MustCompile(`(?i)Here is your daily \*\*<:cowoncy:\d+> ([\d,]+)`)
+	dailyRewardRe = regexp.MustCompile(`(?i)Here is your daily.*?([\d,]+)`)
 )
 
 // Manager runs standalone auto-daily (owo-dusk daily cog).
@@ -124,7 +124,7 @@ func (m *Manager) HandleMessage(content, nick string) {
 		return
 	}
 
-	if strings.Contains(content, "Here is your daily **<:cowoncy:") {
+	if strings.Contains(content, "Here is your daily") {
 		if m.bot.CashCheck() {
 			if reward, ok := parseReward(content); ok {
 				m.bot.OnDailyReward(reward)

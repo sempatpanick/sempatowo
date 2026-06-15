@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sempatowo/sempatowo/internal/config"
+	"github.com/semptpanick/sempatowo/internal/config"
 )
 
 var (
