@@ -14,6 +14,7 @@ type blackjackGame struct {
 	mu          sync.Mutex
 	turnsLost   int
 	exceededMax bool
+	lastBet     int
 	gameEvent   chan struct{}
 }
 
@@ -108,7 +109,9 @@ func (g *blackjackGame) run(stop <-chan struct{}, startup bool) {
 			continue
 		}
 		if dec.send {
-			g.m.bot.Log("Blackjack → " + dec.text)
+			g.mu.Lock()
+			g.lastBet = dec.amount
+			g.mu.Unlock()
 			g.m.bot.SendMessage(g.m.bot.HuntChannelID(), dec.text)
 			return
 		}
@@ -184,6 +187,10 @@ func (g *blackjackGame) onUpdate(msg Message) {
 				return
 			}
 			g.mu.Lock()
+			bet := g.lastBet
+			if bet <= 0 {
+				bet = amt
+			}
 			g.turnsLost++
 			g.mu.Unlock()
 			if g.m.bot.CashCheck() {
@@ -191,7 +198,7 @@ func (g *blackjackGame) onUpdate(msg Message) {
 			}
 			g.m.state.addGain(-amt)
 			gain, _, _ := g.m.state.snapshot()
-			g.m.bot.Log("Blackjack → lost " + logAmt(amt) + " (net " + logAmt(gain) + ")")
+			g.m.bot.Log(formatGambleResult("Blackjack", bet, "lost", &gain))
 			g.scheduleNext(stop)
 
 		case strings.Contains(ft, "You won"):
@@ -201,6 +208,7 @@ func (g *blackjackGame) onUpdate(msg Message) {
 				return
 			}
 			g.mu.Lock()
+			bet := g.lastBet
 			g.turnsLost = 0
 			g.mu.Unlock()
 			if g.m.bot.CashCheck() {
@@ -208,12 +216,18 @@ func (g *blackjackGame) onUpdate(msg Message) {
 			}
 			g.m.state.addGain(amt)
 			gain, _, _ := g.m.state.snapshot()
-			g.m.bot.Log("Blackjack → won " + logAmt(amt) + " (net " + logAmt(gain) + ")")
+			if bet <= 0 {
+				bet = amt
+			}
+			g.m.bot.Log(formatGambleResult("Blackjack", bet, "won", &gain))
 			g.scheduleNext(stop)
 
 		case strings.Contains(ft, "You tied!") || strings.Contains(ft, "You both bust!"):
 			g.signalGameEvent()
-			g.m.bot.Log("Blackjack → no result")
+			g.mu.Lock()
+			bet := g.lastBet
+			g.mu.Unlock()
+			g.m.bot.Log(formatGambleResult("Blackjack", bet, "draw", nil))
 			g.scheduleNext(stop)
 		}
 	}

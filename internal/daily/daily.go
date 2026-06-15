@@ -86,7 +86,7 @@ func (m *Manager) waitForWindow(stop <-chan struct{}) bool {
 		return !stopped(stop)
 	}
 	sec := util.SecondsUntilNextPSTMidnight()
-	m.bot.Log("Daily already claimed today — sleeping until next PST midnight")
+	m.bot.Log("Daily → already claimed (sleep until PST midnight)")
 	sleepUntil(stop, sec)
 	return !stopped(stop) && m.bot.AutoDaily()
 }
@@ -94,7 +94,7 @@ func (m *Manager) waitForWindow(stop <-chan struct{}) bool {
 func (m *Manager) sendDaily() {
 	ch := m.bot.HuntChannelID()
 	text := m.bot.RandomPrefix([]string{"daily"})
-	m.bot.Log("Sending daily")
+	m.bot.Log("Daily → sending")
 	m.bot.SendMessage(ch, text)
 	m.store.SetLastDaily(util.NowPSTUnix())
 }
@@ -128,15 +128,18 @@ func (m *Manager) HandleMessage(content, nick string) {
 		if m.bot.CashCheck() {
 			if reward, ok := parseReward(content); ok {
 				m.bot.OnDailyReward(reward)
+				m.bot.Log("Daily → claimed (+" + util.FormatInt(reward) + ")")
+				m.scheduleAfterResponse(stop)
+				return
 			}
 		}
-		m.bot.Log("Daily claimed")
+		m.bot.Log("Daily → claimed")
 		m.scheduleAfterResponse(stop)
 		return
 	}
 
 	if strings.Contains(content, "**⏱ |**") && strings.Contains(content, "! You need to wait") {
-		m.bot.Log("Daily on cooldown — scheduling for next PST midnight")
+		m.bot.Log("Daily → on cooldown (next PST midnight)")
 		m.scheduleAfterResponse(stop)
 	}
 }

@@ -68,6 +68,7 @@ type Bot struct {
 	checklist   checklistState
 	totalXP     int
 	totalHunts  int
+	lastBattleLog string
 	questOwo    *questProgress
 
 	captchaTimers []*time.Timer
@@ -213,7 +214,7 @@ func (b *Bot) onMessage(msg *discord.Message) {
 		return
 	}
 
-	b.logOwOResponse(content, nick)
+	b.logOwOResponse(msg, content, nick)
 	b.handleChecklist(msg, nick)
 	b.handleHuntGems(msg.Content, nick)
 	b.handleInventory(msg.Content, nick)
@@ -239,6 +240,20 @@ func (b *Bot) onMessageUpdate(msg *discord.Message) {
 		gm.AuthorID = s.OwoID
 	}
 	b.gamble.HandleMessageUpdate(gm)
+
+	if b.captchaSolving {
+		return
+	}
+	nick := b.nickname(msg)
+	if !b.isForMe(msg, nick) {
+		return
+	}
+	content := normalizeZW(msg.Content)
+	if shouldSkipOwOLog(content) {
+		return
+	}
+	b.logOwOResponse(msg, content, nick)
+	b.handleAutoQuestMessage(msg, nick)
 }
 
 func (b *Bot) handleGambleMessage(msg *discord.Message) {
@@ -1059,7 +1074,6 @@ func (b *Bot) startHuntbotIfNeeded() {
 	b.huntbotStarted = true
 	b.mu.Unlock()
 
-	b.log.Info("Huntbot enabled — starting")
 	ctx := b.newHuntbotContext()
 	b.huntbot = huntbot.NewHandler(ctx, b.token)
 	go b.huntbot.Start()

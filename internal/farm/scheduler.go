@@ -48,7 +48,6 @@ var farmCommands = []farmCmdDef{
 			},
 			channel: func(b *Bot) string { return b.settings().Channels.Hunt },
 			text:    func(b *Bot) string { return b.randomPrefix([]string{"hunt", "h"}) },
-			log:     "Hunting",
 			delayMs: func(b *Bot) int { return b.actionDelay("hunt") },
 		},
 		{
@@ -58,7 +57,6 @@ var farmCommands = []farmCmdDef{
 			},
 			channel: func(b *Bot) string { return b.settings().Channels.Hunt },
 			text:    func(b *Bot) string { return b.randomPrefix([]string{"battle", "b"}) },
-			log:     "Battling",
 			delayMs: func(b *Bot) int { return b.actionDelay("battle") },
 			startupDelayMs: func(b *Bot) int {
 				return b.actionDelay("battle") / 2
@@ -77,7 +75,6 @@ var farmCommands = []farmCmdDef{
 				}
 				return txt
 			},
-			log: "Praying",
 			delayMs: func(b *Bot) int {
 				return b.settings().Interval.Pray
 			},
@@ -122,7 +119,6 @@ var farmCommands = []farmCmdDef{
 			},
 			channel: func(b *Bot) string { return b.settings().Channels.Hunt },
 			text:    func(b *Bot) string { return b.randomPrefix([]string{"inv", "inventory"}) },
-			log:     "Checking inventory",
 			delayMs: func(b *Bot) int {
 				return b.settings().Interval.Inventory
 			},
@@ -239,7 +235,9 @@ func (b *Bot) runFarmScheduler(stop <-chan struct{}) {
 			continue
 		}
 
-		b.log.Info(def.log)
+		if def.log != "" {
+			b.log.Info(def.log)
+		}
 		b.enqueue(def.channel(b), def.text(b))
 
 		delay := def.delayMs(b)

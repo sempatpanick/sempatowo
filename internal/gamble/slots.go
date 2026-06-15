@@ -18,6 +18,7 @@ type slotsGame struct {
 	turnsLost      int
 	exceededMax    bool
 	awaitingResult bool
+	lastBet        int
 }
 
 func (g *slotsGame) run(stop <-chan struct{}, startup bool) {
@@ -56,8 +57,8 @@ func (g *slotsGame) run(stop <-chan struct{}, startup bool) {
 		if dec.send {
 			g.mu.Lock()
 			g.awaitingResult = true
+			g.lastBet = dec.amount
 			g.mu.Unlock()
-			g.m.bot.Log("Slots → " + dec.text)
 			g.m.bot.SendGambleBet(g.m.bot.HuntChannelID(), QueueSlots, dec.text)
 			return
 		}
@@ -109,7 +110,7 @@ func (g *slotsGame) onResult(msg Message) {
 		}
 		g.m.state.addGain(-bet)
 		gain, _, _ := g.m.state.snapshot()
-		g.m.bot.Log("Slots → lost " + logAmt(bet) + " (net " + logAmt(gain) + ")")
+		g.m.bot.Log(formatGambleResult("Slots", bet, "lost", &gain))
 		g.m.bot.SignalGambleResult(QueueSlots)
 		g.scheduleNext(stop)
 		return
@@ -117,9 +118,10 @@ func (g *slotsGame) onResult(msg Message) {
 
 	if strings.Contains(lower, "<:eggplant:417475705719226369>") && strings.Contains(lower, "and won") {
 		g.mu.Lock()
+		bet := g.lastBet
 		g.awaitingResult = false
 		g.mu.Unlock()
-		g.m.bot.Log("Slots → no result")
+		g.m.bot.Log(formatGambleResult("Slots", bet, "no result", nil))
 		g.m.bot.SignalGambleResult(QueueSlots)
 		g.scheduleNext(stop)
 		return
@@ -135,7 +137,7 @@ func (g *slotsGame) onResult(msg Message) {
 			g.mu.Lock()
 			g.awaitingResult = false
 			g.mu.Unlock()
-			g.m.bot.Log("Slots → draw " + logAmt(bet))
+			g.m.bot.Log(formatGambleResult("Slots", bet, "draw", nil))
 			g.m.bot.SignalGambleResult(QueueSlots)
 			g.scheduleNext(stop)
 			return
@@ -150,7 +152,7 @@ func (g *slotsGame) onResult(msg Message) {
 		}
 		g.m.state.addGain(profit)
 		gain, _, _ := g.m.state.snapshot()
-		g.m.bot.Log("Slots → won " + logAmt(won) + " (net " + logAmt(gain) + ")")
+		g.m.bot.Log(formatGambleResult("Slots", bet, "won", &gain))
 		g.m.bot.SignalGambleResult(QueueSlots)
 		g.scheduleNext(stop)
 	}

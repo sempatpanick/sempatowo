@@ -182,6 +182,14 @@ func logAmt(n int) string {
 	return util.FormatInt(n)
 }
 
+func formatGambleResult(game string, bet int, outcome string, net *int) string {
+	s := game + " → bet " + logAmt(bet) + " · " + outcome
+	if net != nil {
+		s += " (net " + logAmt(*net) + ")"
+	}
+	return s
+}
+
 func coinflipSide(opts config.CoinflipOptions) string {
 	var choices []string
 	if opts.Heads {
