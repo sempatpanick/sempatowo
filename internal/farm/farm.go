@@ -204,8 +204,7 @@ func (b *Bot) onMessage(msg *discord.Message) {
 
 	uid := b.userID()
 	if uid != "" && isCaptcha(content, msg, uid) {
-		b.logInfo("OwO message: " + owoMessageText(msg))
-		b.logDanger("OwO captcha detected")
+		b.logDanger("Captcha detected")
 		b.handleCaptcha()
 		return
 	}
@@ -214,7 +213,7 @@ func (b *Bot) onMessage(msg *discord.Message) {
 		return
 	}
 
-	b.logInfo("OwO message: " + owoMessageText(msg))
+	b.logOwOResponse(content, nick)
 	b.handleChecklist(msg, nick)
 	b.handleHuntGems(msg.Content, nick)
 	b.handleInventory(msg.Content, nick)
@@ -549,10 +548,8 @@ var xpRe = regexp.MustCompile(`gained \*\*(\d+)xp\*\*`)
 var questRe = regexp.MustCompile(`(?s)\*\*\d+\. (.+?)\*\*.*?Progress: \[(\d+)/(\d+)\]`)
 
 func (b *Bot) handleHuntGems(content, nick string) {
-	if !strings.Contains(content, nick) && !huntGemRe.MatchString(content) {
-		if !strings.Contains(content, nick+"** spent") && !strings.Contains(content, ", hunt") {
-			return
-		}
+	if !isHuntMessage(content, nick) {
+		return
 	}
 
 	b.totalHunts++
@@ -584,7 +581,19 @@ func (b *Bot) handleHuntGems(content, nick string) {
 		xp, _ := strconv.Atoi(m[1])
 		b.totalXP += xp
 	}
-	b.log.Info(fmt.Sprintf("Total hunt XP: %d", b.totalXP))
+}
+
+func isHuntMessage(content, nick string) bool {
+	if strings.Contains(content, "You found:") {
+		return true
+	}
+	if strings.Contains(content, "hunt is empowered") || strings.Contains(content, ", hunt") {
+		return true
+	}
+	if strings.Contains(content, nick+"** spent") {
+		return true
+	}
+	return huntGemRe.MatchString(content)
 }
 
 func bestGem(inv map[string]int, ids []string) string {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/semptpanick/sempatowo/internal/config"
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 var commaAmountRe = regexp.MustCompile(`([\d,]+)`)
@@ -174,7 +175,7 @@ func (m *Manager) flagAmountExceeded(v bool) bool {
 }
 
 func itoa(n int) string {
-	return strconv.Itoa(n)
+	return util.FormatInt(n)
 }
 
 func coinflipSide(opts config.CoinflipOptions) string {

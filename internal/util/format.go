@@ -2,6 +2,7 @@ package util
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -23,4 +24,24 @@ func SuperscriptToNumber(s string) int {
 	var n int
 	fmt.Sscanf(b.String(), "%d", &n)
 	return n
+}
+
+// FormatInt formats an integer with thousands separators (e.g. 114308 → "114,308").
+func FormatInt(n int) string {
+	sign := ""
+	if n < 0 {
+		sign = "-"
+		n = -n
+	}
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return sign + s
+	}
+	var parts []string
+	for len(s) > 3 {
+		parts = append([]string{s[len(s)-3:]}, parts...)
+		s = s[:len(s)-3]
+	}
+	parts = append([]string{s}, parts...)
+	return sign + strings.Join(parts, ",")
 }

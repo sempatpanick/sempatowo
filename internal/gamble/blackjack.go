@@ -108,7 +108,7 @@ func (g *blackjackGame) run(stop <-chan struct{}, startup bool) {
 			continue
 		}
 		if dec.send {
-			g.m.bot.Log("Blackjack: " + dec.text)
+			g.m.bot.Log("Blackjack → " + dec.text)
 			g.m.bot.SendMessage(g.m.bot.HuntChannelID(), dec.text)
 			return
 		}
@@ -191,7 +191,7 @@ func (g *blackjackGame) onUpdate(msg Message) {
 			}
 			g.m.state.addGain(-amt)
 			gain, _, _ := g.m.state.snapshot()
-			g.m.bot.Log("lost " + itoa(amt) + " in bj, net profit " + itoa(gain))
+			g.m.bot.Log("Blackjack → lost " + itoa(amt) + " (net " + itoa(gain) + ")")
 			g.scheduleNext(stop)
 
 		case strings.Contains(ft, "You won"):
@@ -208,12 +208,12 @@ func (g *blackjackGame) onUpdate(msg Message) {
 			}
 			g.m.state.addGain(amt)
 			gain, _, _ := g.m.state.snapshot()
-			g.m.bot.Log("won " + itoa(amt) + " in bj, net profit " + itoa(gain))
+			g.m.bot.Log("Blackjack → won " + itoa(amt) + " (net " + itoa(gain) + ")")
 			g.scheduleNext(stop)
 
 		case strings.Contains(ft, "You tied!") || strings.Contains(ft, "You both bust!"):
 			g.signalGameEvent()
-			g.m.bot.Log("blackjack: no win or loss")
+			g.m.bot.Log("Blackjack → no result")
 			g.scheduleNext(stop)
 		}
 	}

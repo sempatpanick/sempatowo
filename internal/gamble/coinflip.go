@@ -62,7 +62,7 @@ func (g *coinflipGame) run(stop <-chan struct{}, startup bool) {
 			g.mu.Lock()
 			g.awaitingResult = true
 			g.mu.Unlock()
-			g.m.bot.Log("Coinflip: " + dec.text)
+			g.m.bot.Log("Coinflip → " + dec.text)
 			g.m.bot.SendGambleBet(g.m.bot.HuntChannelID(), QueueCoinflip, dec.text)
 			return
 		}
@@ -114,7 +114,7 @@ func (g *coinflipGame) onResult(msg Message) {
 		}
 		g.m.state.addGain(-lose)
 		gain, _, _ := g.m.state.snapshot()
-		g.m.bot.Log("lost " + itoa(lose) + " in cf, net profit " + itoa(gain))
+		g.m.bot.Log("Coinflip → lost " + itoa(lose) + " (net " + itoa(gain) + ")")
 		g.m.bot.SignalGambleResult(QueueCoinflip)
 		g.scheduleNext(stop)
 		return
@@ -135,7 +135,7 @@ func (g *coinflipGame) onResult(msg Message) {
 	}
 	g.m.state.addGain(profit)
 	gain, _, _ := g.m.state.snapshot()
-	g.m.bot.Log("won " + itoa(won) + " in cf, net profit " + itoa(gain))
+	g.m.bot.Log("Coinflip → won " + itoa(won) + " (net " + itoa(gain) + ")")
 	g.m.bot.SignalGambleResult(QueueCoinflip)
 	g.scheduleNext(stop)
 }

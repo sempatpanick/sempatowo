@@ -86,22 +86,3 @@ func firstEmbed(msg *discord.Message) *discord.Embed {
 	return msg.Embeds[0]
 }
 
-// owoMessageText returns a short summary for logging (content, or embed footer text).
-func owoMessageText(msg *discord.Message) string {
-	if msg == nil {
-		return ""
-	}
-	if text := strings.TrimSpace(msg.Content); text != "" {
-		return text
-	}
-	var parts []string
-	for _, embed := range msg.Embeds {
-		if embed == nil || embed.Footer == nil {
-			continue
-		}
-		if t := strings.TrimSpace(embed.Footer.Text); t != "" {
-			parts = append(parts, t)
-		}
-	}
-	return strings.Join(parts, " | ")
-}
