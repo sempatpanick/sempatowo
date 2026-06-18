@@ -69,16 +69,6 @@ func (m *Manager) loop(stop <-chan struct{}) {
 		if stopped(stop) || !m.bot.CanSend() || !m.bot.AutoQuest().Enabled {
 			return
 		}
-		s := m.bot.AutoQuest()
-		min, max := 10.0, 30.0
-		if s.CheckCooldown.Range != nil {
-			min, max = (*s.CheckCooldown.Range)[0], (*s.CheckCooldown.Range)[1]
-		}
-		m.bot.SleepRange(min, max)
-
-		if stopped(stop) {
-			return
-		}
 
 		m.signalQuestUpdated() // clear stale
 		ch := m.bot.HuntChannelID()
@@ -92,6 +82,7 @@ func (m *Manager) loop(stop <-chan struct{}) {
 		case <-time.After(20 * time.Second):
 		}
 
+		s := m.bot.AutoQuest()
 		if s.HelpChannel.PostInHelpChannel && m.local.HelpRequired() && !m.local.HelpAlreadyPosted() {
 			helpCh := m.bot.QuestHelpChannelID()
 			if helpCh != "" {
@@ -110,7 +101,14 @@ func (m *Manager) loop(stop <-chan struct{}) {
 
 		if m.local.IsAllDone() {
 			m.local.WaitTillNextQuest(stop)
+			continue
 		}
+
+		min, max := 10.0, 30.0
+		if s.CheckCooldown.Range != nil {
+			min, max = (*s.CheckCooldown.Range)[0], (*s.CheckCooldown.Range)[1]
+		}
+		m.bot.SleepRange(min, max)
 	}
 }
 

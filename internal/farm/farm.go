@@ -62,6 +62,9 @@ type Bot struct {
 	cmdHeap      cmdHeap
 	cmdSeq       uint64
 	cmdSchedStop chan struct{}
+	farmAwaiting map[string]struct{}
+
+	checklistAwaiting bool
 
 	timerCancel map[string]func()
 	inventory   map[string]int
@@ -83,6 +86,7 @@ type checklistState struct {
 type questProgress struct {
 	current, total int
 	cancel         func()
+	waitCh         chan struct{}
 }
 
 // New creates a bot instance (does not connect yet).
@@ -224,6 +228,7 @@ func (b *Bot) onMessage(msg *discord.Message) {
 	}
 
 	b.logOwOResponse(msg, content, nick)
+	b.trySignalFarmFromMessage(msg, content, nick)
 	b.handleChecklist(msg, nick)
 	b.handleHuntGems(msg.Content, nick)
 	b.handleInventory(msg.Content, nick)
@@ -272,6 +277,7 @@ func (b *Bot) onMessageUpdate(msg *discord.Message) {
 		return
 	}
 	b.logOwOResponse(msg, content, nick)
+	b.trySignalFarmFromMessage(msg, content, nick)
 	b.handleAutoQuestMessage(msg, nick)
 }
 
@@ -546,6 +552,15 @@ func (b *Bot) handleChecklist(msg *discord.Message, nick string) {
 		b.log.Info("All checklist completed")
 		if s.ChecklistCompleted {
 			b.stopFarmTimers()
+			b.mu.Lock()
+			if !b.ready && b.canSendLocked() {
+				b.ready = true
+				b.mu.Unlock()
+				b.startAutomation()
+				return
+			}
+			b.mu.Unlock()
+			return
 		}
 	}
 
@@ -553,10 +568,12 @@ func (b *Bot) handleChecklist(msg *discord.Message, nick string) {
 	if !b.ready && b.canSendLocked() {
 		b.ready = true
 		b.mu.Unlock()
+		b.signalChecklistResponse()
 		b.startAutomation()
 		return
 	}
 	b.mu.Unlock()
+	b.signalChecklistResponse()
 }
 
 var huntGemRe = regexp.MustCompile(`(?:(.+)\*\*( spent|, hunt))`)
@@ -685,38 +702,55 @@ func (b *Bot) runOwoQuest(done <-chan struct{}, intervalMs int, channel string) 
 		intervalMs = 32000
 	}
 	go func() {
-		ticker := time.NewTicker(time.Duration(intervalMs) * time.Millisecond)
-		defer ticker.Stop()
+		interval := time.Duration(intervalMs) * time.Millisecond
 		for {
+			delay := time.NewTimer(interval)
 			select {
 			case <-done:
+				delay.Stop()
 				return
-			case <-ticker.C:
-				if !b.canSend() {
-					return
-				}
-				b.mu.Lock()
-				q := b.questOwo
+			case <-delay.C:
+			}
+
+			if !b.canSend() {
+				return
+			}
+			b.mu.Lock()
+			q := b.questOwo
+			if q == nil {
 				b.mu.Unlock()
-				if q == nil {
-					return
-				}
-				b.logInfo("Owo quest: owo")
-				b.enqueue(channel, "owo")
-				b.mu.Lock()
-				if b.questOwo == nil {
-					b.mu.Unlock()
-					return
-				}
-				b.questOwo.current++
-				doneQuest := b.questOwo.current >= b.questOwo.total
-				if doneQuest {
-					b.questOwo = nil
-				}
+				return
+			}
+			waitCh := make(chan struct{})
+			q.waitCh = waitCh
+			b.mu.Unlock()
+
+			b.logInfo("Owo quest: owo")
+			b.enqueue(channel, "owo")
+
+			responseTimer := time.NewTimer(farmResponseTimeout)
+			select {
+			case <-done:
+				responseTimer.Stop()
+				return
+			case <-waitCh:
+				responseTimer.Stop()
+			case <-responseTimer.C:
+			}
+
+			b.mu.Lock()
+			if b.questOwo == nil {
 				b.mu.Unlock()
-				if doneQuest {
-					return
-				}
+				return
+			}
+			b.questOwo.current++
+			doneQuest := b.questOwo.current >= b.questOwo.total
+			if doneQuest {
+				b.questOwo = nil
+			}
+			b.mu.Unlock()
+			if doneQuest {
+				return
 			}
 		}
 	}()
@@ -782,6 +816,7 @@ func (b *Bot) stopFarmTimers() {
 
 func (b *Bot) stopFarmTimersLocked() {
 	b.stopFarmSchedulerLocked()
+	b.checklistAwaiting = false
 	if cancel, ok := b.timerCancel["checklist"]; ok {
 		cancel()
 		delete(b.timerCancel, "checklist")
@@ -816,10 +851,7 @@ func (b *Bot) scheduleTimer(name string, delayMs int, fn func()) {
 }
 
 func (b *Bot) startChecklistLoop() {
-	b.scheduleTimer("checklist", 0, func() {
-		b.sendChecklist()
-		b.scheduleTimer("checklist", b.settings().Interval.Checklist, b.startChecklistLoop)
-	})
+	b.sendChecklist()
 }
 
 func (b *Bot) sendChecklist() {
@@ -827,6 +859,7 @@ func (b *Bot) sendChecklist() {
 		return
 	}
 	b.log.Info("Sending checklist")
+	b.markChecklistAwaiting()
 	b.enqueue(b.settings().Channels.Hunt, b.randomPrefix([]string{"cl", "checklist"}))
 }
 

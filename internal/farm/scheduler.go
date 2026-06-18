@@ -188,6 +188,7 @@ func (b *Bot) stopFarmSchedulerLocked() {
 		b.cmdSchedStop = nil
 	}
 	b.cmdHeap = nil
+	b.farmAwaiting = nil
 }
 
 func (b *Bot) runFarmScheduler(stop <-chan struct{}) {
@@ -240,15 +241,8 @@ func (b *Bot) runFarmScheduler(stop <-chan struct{}) {
 		}
 		b.enqueue(def.channel(b), def.text(b))
 
-		delay := def.delayMs(b)
-		if delay <= 0 {
-			continue
+		if def.delayMs(b) > 0 {
+			b.markFarmAwaiting(def.name)
 		}
-
-		b.mu.Lock()
-		if b.canSendLocked() && b.cmdSchedStop != nil && def.enabled(b) {
-			b.pushScheduledCmd(def.name, time.Now().Add(time.Duration(delay)*time.Millisecond))
-		}
-		b.mu.Unlock()
 	}
 }
