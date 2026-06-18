@@ -149,6 +149,11 @@ func (b *Bot) tryHandleCaptcha(msg *discord.Message, content string) bool {
 	if !detectCaptcha(msg, content, nick, uid, b.username()) {
 		return false
 	}
+	if text := owoMessageTextFromMsg(msg); text != "" {
+		b.logDanger("OwO captcha: " + text)
+	} else if full := strings.TrimSpace(owoMessageFullText(msg, content)); full != "" {
+		b.logDanger("OwO captcha: " + truncateLogText(stripDiscordText(full)))
+	}
 	b.logDanger("Captcha detected — stopping farm (~10 min to solve)")
 	b.handleCaptcha()
 	return true
