@@ -8,6 +8,8 @@ require (
 	github.com/joho/godotenv v1.5.1
 )
 
+replace github.com/hytams/discordgo-self => ./deps/discordgo-self
+
 require (
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
 	github.com/esiqveland/notify v0.13.3 // indirect
