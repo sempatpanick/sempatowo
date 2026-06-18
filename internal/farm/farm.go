@@ -409,7 +409,7 @@ func (b *Bot) runCaptchaFlow() {
 
 	url := captcha.GetURL(b.token)
 	notify.CaptchaUrgent(profile, "Solve captcha now! Auto-solver also running in background.", url)
-	b.scheduleCaptchaWarnings(url)
+	b.scheduleCaptchaWarnings()
 	captcha.OpenBrowserAsync(url, profile, stillNeeded)
 
 	if strings.TrimSpace(getEnv("CAPTCHA_API_KEY")) == "" {
@@ -441,7 +441,7 @@ func (b *Bot) profileLabel() string {
 	return "account"
 }
 
-func (b *Bot) scheduleCaptchaWarnings(url string) {
+func (b *Bot) scheduleCaptchaWarnings() {
 	warnAt := []int{8, 5, 2, 1}
 	profile := b.profileLabel()
 	for _, minLeft := range warnAt {
@@ -454,6 +454,7 @@ func (b *Bot) scheduleCaptchaWarnings(url string) {
 			if !solving {
 				return
 			}
+			url := captcha.GetURL(b.token)
 			msg := fmt.Sprintf("%d minute(s) left to solve captcha or you may be banned", minLeft)
 			b.logDanger(msg)
 			notify.CaptchaUrgent(profile, msg, url)
