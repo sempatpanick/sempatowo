@@ -62,6 +62,9 @@ func isCaptchaVerificationPrompt(lower string) bool {
 	if realHumanRe.MatchString(lower) && strings.Contains(lower, "please") {
 		return true
 	}
+	if realHumanRe.MatchString(lower) && strings.Contains(lower, "ban") {
+		return true
+	}
 	return captchaVerifyCount.MatchString(lower)
 }
 

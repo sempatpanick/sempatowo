@@ -72,6 +72,8 @@ type Bot struct {
 	questOwo    *questProgress
 
 	captchaTimers []*time.Timer
+
+	simulateCaptcha bool
 }
 
 type checklistState struct {
@@ -96,6 +98,10 @@ func New(token string) *Bot {
 
 // Run connects to Discord and blocks until disconnect.
 func (b *Bot) Run() error {
+	return b.run()
+}
+
+func (b *Bot) run() error {
 	client, err := discord.New(b.token)
 	if err != nil {
 		return err
@@ -149,6 +155,11 @@ func (b *Bot) onReady() {
 
 	s := b.cfg.Get()
 	b.log.Info(fmt.Sprintf("Channels — hunt: %s, quest: %s", s.Channels.Hunt, s.Channels.Quest))
+
+	if b.simulateCaptcha {
+		b.scheduleSimulateCaptcha()
+		return
+	}
 
 	b.enqueue(s.Channels.Hunt, "sempatowo v1.0.0")
 	b.startChecklistLoop()
