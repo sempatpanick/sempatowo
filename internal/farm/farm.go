@@ -166,7 +166,7 @@ func (b *Bot) onReady() {
 	}
 
 	b.enqueue(s.Channels.Hunt, "sempatowo v1.0.0")
-	b.startChecklistLoop()
+	// b.startChecklistLoop()
 
 	time.AfterFunc(8*time.Second, func() {
 		b.mu.Lock()
@@ -458,12 +458,12 @@ func (b *Bot) scheduleCaptchaWarnings() {
 			msg := fmt.Sprintf("%d minute(s) left to solve captcha or you may be banned", minLeft)
 			b.logDanger(msg)
 			notify.CaptchaUrgent(profile, msg, url)
-			stillNeeded := func() bool {
-				b.mu.Lock()
-				defer b.mu.Unlock()
-				return b.captchaSolving
-			}
-			captcha.OpenBrowserAsync(url, profile, stillNeeded)
+			// stillNeeded := func() bool {
+			// 	b.mu.Lock()
+			// 	defer b.mu.Unlock()
+			// 	return b.captchaSolving
+			// }
+			// captcha.OpenBrowserAsync(url, profile, stillNeeded)
 		})
 		b.mu.Lock()
 		b.captchaTimers = append(b.captchaTimers, t)
@@ -494,7 +494,7 @@ func (b *Bot) handleVerificationSuccess(content string) {
 	}
 
 	b.logInfo("OwO verification success — resuming auto farm (" + content + ")")
-	b.startChecklistLoop()
+	// b.startChecklistLoop()
 	b.startAutomation()
 }
 
