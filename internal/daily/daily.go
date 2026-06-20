@@ -18,7 +18,8 @@ const (
 )
 
 var (
-	dailyRewardRe = regexp.MustCompile(`(?i)Here is your daily.*?([\d,]+)`)
+	dailyClaimRe    = regexp.MustCompile(`(?i)Here is your daily\s+([\d,]+)\s*Cowoncy`)
+	dailyCooldownRe = regexp.MustCompile(`(?i)⏱\s*\|.*?Nu!.*?You need to wait`)
 )
 
 // Manager runs standalone auto-daily (owo-dusk daily cog).
@@ -94,7 +95,6 @@ func (m *Manager) waitForWindow(stop <-chan struct{}) bool {
 func (m *Manager) sendDaily() {
 	ch := m.bot.HuntChannelID()
 	text := m.bot.RandomPrefix([]string{"daily"})
-	m.bot.Log("Daily → sending")
 	m.bot.SendMessage(ch, text)
 	m.store.SetLastDaily(util.NowPSTUnix())
 }
@@ -119,12 +119,18 @@ func (m *Manager) HandleMessage(content, nick string) {
 		return
 	}
 
+	claimed := dailyClaimRe.MatchString(content)
+	onCooldown := dailyCooldownRe.MatchString(content)
+	if !claimed && !onCooldown {
+		return
+	}
+
 	stop := m.stopChan()
 	if stopped(stop) {
 		return
 	}
 
-	if strings.Contains(content, "Here is your daily") {
+	if claimed {
 		if m.bot.CashCheck() {
 			if reward, ok := parseReward(content); ok {
 				m.bot.OnDailyReward(reward)
@@ -138,14 +144,12 @@ func (m *Manager) HandleMessage(content, nick string) {
 		return
 	}
 
-	if strings.Contains(content, "**⏱ |**") && strings.Contains(content, "! You need to wait") {
-		m.bot.Log("Daily → on cooldown (next PST midnight)")
-		m.scheduleAfterResponse(stop)
-	}
+	m.bot.Log("Daily → on cooldown (next PST midnight)")
+	m.scheduleAfterResponse(stop)
 }
 
 func parseReward(content string) (int, bool) {
-	m := dailyRewardRe.FindStringSubmatch(content)
+	m := dailyClaimRe.FindStringSubmatch(content)
 	if len(m) < 2 {
 		return 0, false
 	}

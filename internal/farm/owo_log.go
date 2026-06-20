@@ -45,6 +45,12 @@ func shouldSkipOwOLog(content string) bool {
 	if strings.Contains(content, "cowoncy!") || strings.Contains(content, "you currently have") {
 		return true
 	}
+	if strings.Contains(lower, "here is your daily") && strings.Contains(lower, "cowoncy") {
+		return true
+	}
+	if strings.Contains(content, "⏱") && strings.Contains(content, "Nu!") && strings.Contains(content, "You need to wait") {
+		return true
+	}
 	return false
 }
 
