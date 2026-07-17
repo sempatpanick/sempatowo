@@ -63,6 +63,7 @@ type Bot struct {
 	cmdHeap      cmdHeap
 	cmdSeq       uint64
 	cmdSchedStop chan struct{}
+	cmdWake      chan struct{}
 	farmAwaiting map[string]struct{}
 
 	checklistAwaiting bool

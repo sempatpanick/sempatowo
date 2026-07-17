@@ -146,9 +146,17 @@ func (b *Bot) farmCmdByName(name string) *farmCmdDef {
 	return nil
 }
 
+// pushScheduledCmd requires b.mu held. It wakes the scheduler so a command due
+// sooner than the current heap head is not stuck behind its timer.
 func (b *Bot) pushScheduledCmd(name string, nextRun time.Time) {
 	b.cmdSeq++
 	heap.Push(&b.cmdHeap, &scheduledCmd{name: name, nextRun: nextRun, seq: b.cmdSeq})
+	if b.cmdWake != nil {
+		select {
+		case b.cmdWake <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (b *Bot) startFarmScheduler() {
@@ -157,6 +165,8 @@ func (b *Bot) startFarmScheduler() {
 
 	stop := make(chan struct{})
 	b.cmdSchedStop = stop
+	b.cmdWake = make(chan struct{}, 1)
+	wake := b.cmdWake
 	b.cmdSeq = 0
 	b.cmdHeap = nil
 
@@ -174,12 +184,13 @@ func (b *Bot) startFarmScheduler() {
 	heap.Init(&b.cmdHeap)
 	if len(b.cmdHeap) == 0 {
 		b.cmdSchedStop = nil
+		b.cmdWake = nil
 		b.mu.Unlock()
 		return
 	}
 	b.mu.Unlock()
 
-	go b.runFarmScheduler(stop)
+	go b.runFarmScheduler(stop, wake)
 }
 
 func (b *Bot) stopFarmSchedulerLocked() {
@@ -187,21 +198,35 @@ func (b *Bot) stopFarmSchedulerLocked() {
 		close(b.cmdSchedStop)
 		b.cmdSchedStop = nil
 	}
+	b.cmdWake = nil
 	b.cmdHeap = nil
 	b.farmAwaiting = nil
 }
 
-func (b *Bot) runFarmScheduler(stop <-chan struct{}) {
+func (b *Bot) runFarmScheduler(stop <-chan struct{}, wake <-chan struct{}) {
 	for {
 		b.mu.Lock()
-		if len(b.cmdHeap) == 0 {
-			b.cmdSchedStop = nil
+		if b.cmdSchedStop != stop {
 			b.mu.Unlock()
 			return
 		}
-		next := b.cmdHeap[0]
-		wait := time.Until(next.nextRun)
+		empty := len(b.cmdHeap) == 0
+		var wait time.Duration
+		if !empty {
+			wait = time.Until(b.cmdHeap[0].nextRun)
+		}
 		b.mu.Unlock()
+
+		// An empty heap means every command is in flight awaiting its OwO
+		// response, not that the work is done — block until one reschedules.
+		if empty {
+			select {
+			case <-stop:
+				return
+			case <-wake:
+			}
+			continue
+		}
 
 		if wait > 0 {
 			timer := time.NewTimer(wait)
@@ -209,6 +234,10 @@ func (b *Bot) runFarmScheduler(stop <-chan struct{}) {
 			case <-stop:
 				timer.Stop()
 				return
+			case <-wake:
+				// Something due sooner may have been pushed; recompute.
+				timer.Stop()
+				continue
 			case <-timer.C:
 			}
 		}
@@ -220,14 +249,26 @@ func (b *Bot) runFarmScheduler(stop <-chan struct{}) {
 		}
 
 		b.mu.Lock()
-		if len(b.cmdHeap) == 0 || b.cmdSchedStop == nil {
+		if b.cmdSchedStop != stop {
 			b.mu.Unlock()
 			return
+		}
+		if len(b.cmdHeap) == 0 {
+			b.mu.Unlock()
+			continue
 		}
 		item := heap.Pop(&b.cmdHeap).(*scheduledCmd)
 		b.mu.Unlock()
 
 		if !b.canSend() {
+			// Paused (e.g. captcha). Mark this run dead — but only if it is
+			// still the current one — so reschedules don't push into a heap
+			// nobody is draining.
+			b.mu.Lock()
+			if b.cmdSchedStop == stop {
+				b.stopFarmSchedulerLocked()
+			}
+			b.mu.Unlock()
 			return
 		}
 
