@@ -75,6 +75,8 @@ type BotContext interface {
 	CanSend() bool
 	Log(msg string)
 	Sleep(seconds float64)
-	SleepUntil(seconds float64, noiseSec float64)
+	// SleepUntil blocks for seconds plus up to noiseSec of jitter. It reports
+	// false when the wait was cut short by CancelSleep.
+	SleepUntil(seconds float64, noiseSec float64) bool
 	CancelSleep()
 }

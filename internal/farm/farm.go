@@ -49,7 +49,8 @@ type Bot struct {
 	gamble              *gamble.Manager
 	daily               *daily.Manager
 	autoQuest           *quest.Manager
-	sleepCancel           func()
+	sleepMu               sync.Mutex
+	sleep                 *sleepHandle
 
 	queue       []queuedMsg
 	queueStop   chan struct{}
@@ -1171,6 +1172,11 @@ type huntbotCtx struct {
 	bot *Bot
 }
 
+// sleepHandle identifies one in-flight sleep so a sleeper only clears its own.
+type sleepHandle struct {
+	cancel func()
+}
+
 func (b *Bot) newHuntbotContext() *huntbotCtx {
 	return &huntbotCtx{bot: b}
 }
@@ -1229,43 +1235,71 @@ func (c *huntbotCtx) Sleep(seconds float64) {
 	time.Sleep(time.Duration(seconds * float64(time.Second)))
 }
 
-func (c *huntbotCtx) SleepUntil(seconds, noise float64) {
+// SleepUntil reports false if CancelSleep cut the wait short, so callers can
+// tell an elapsed timer from an aborted one.
+func (c *huntbotCtx) SleepUntil(seconds, noise float64) bool {
 	if c == nil || c.bot == nil {
-		return
+		return false
 	}
-	c.bot.CancelSleep()
 	d := seconds
 	if noise > 0 {
 		d += rand.Float64() * noise
 	}
-	done := make(chan struct{})
-	timer := time.AfterFunc(time.Duration(d*float64(time.Second)), func() { close(done) })
-	c.bot.sleepCancel = func() {
-		timer.Stop()
-		select {
-		case <-done:
-		default:
-			close(done)
-		}
+	if d <= 0 {
+		return true
 	}
-	<-done
-	c.bot.sleepCancel = nil
+
+	res := make(chan bool, 1)
+	var once sync.Once
+	timer := time.AfterFunc(time.Duration(d*float64(time.Second)), func() {
+		once.Do(func() { res <- true })
+	})
+	h := &sleepHandle{cancel: func() {
+		once.Do(func() {
+			timer.Stop()
+			res <- false
+		})
+	}}
+
+	c.bot.setSleep(h)
+	elapsed := <-res
+	c.bot.clearSleep(h)
+	return elapsed
 }
 
 func (c *huntbotCtx) CancelSleep() {
 	if c == nil || c.bot == nil {
 		return
 	}
-	if c.bot.sleepCancel != nil {
-		c.bot.sleepCancel()
-		c.bot.sleepCancel = nil
+	c.bot.CancelSleep()
+}
+
+// setSleep makes h the active sleep, cancelling whichever one it replaces.
+func (b *Bot) setSleep(h *sleepHandle) {
+	b.sleepMu.Lock()
+	prev := b.sleep
+	b.sleep = h
+	b.sleepMu.Unlock()
+	if prev != nil {
+		prev.cancel()
 	}
 }
 
+func (b *Bot) clearSleep(h *sleepHandle) {
+	b.sleepMu.Lock()
+	if b.sleep == h {
+		b.sleep = nil
+	}
+	b.sleepMu.Unlock()
+}
+
 func (b *Bot) CancelSleep() {
-	if b.sleepCancel != nil {
-		b.sleepCancel()
-		b.sleepCancel = nil
+	b.sleepMu.Lock()
+	h := b.sleep
+	b.sleep = nil
+	b.sleepMu.Unlock()
+	if h != nil {
+		h.cancel()
 	}
 }
 

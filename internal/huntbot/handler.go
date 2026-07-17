@@ -20,6 +20,10 @@ var (
 const briefCooldownMin = 5.0
 const briefCooldownMax = 8.0
 
+// resendPadding is added to the remaining time OwO reports so the next
+// autohunt lands just after HuntBot is free again, never a tick early.
+const resendPadding = 3.0
+
 // Handler manages HuntBot autohunt commands and upgrades.
 type Handler struct {
 	bot            BotContext
@@ -51,7 +55,9 @@ func (h *Handler) Start() {
 	if h == nil || h.bot == nil || !h.bot.Settings().Enabled {
 		return
 	}
-	h.bot.SleepUntil(briefCooldownMin, briefCooldownMax-briefCooldownMin)
+	if !h.bot.SleepUntil(briefCooldownMin, briefCooldownMax-briefCooldownMin) {
+		return
+	}
 	h.sendAutohunt("", false)
 }
 
@@ -85,9 +91,7 @@ func (h *Handler) HandleMessage(msg Message) {
 		case strings.Contains(content, "Please include your password!"):
 			h.handlePasswordRetry(content)
 		case strings.Contains(content, "I WILL BE BACK IN"):
-			secs := parseDuration(content)
-			h.bot.Log("huntbot will be back in " + strconv.Itoa(secs) + "s")
-			h.resendAfter(float64(secs))
+			h.resendAfterRemaining(parseDuration(content))
 		}
 	}
 
@@ -124,9 +128,7 @@ func (h *Handler) HandleMessage(msg Message) {
 		if len(embed.Fields) > 8 {
 			field := embed.Fields[8]
 			if strings.Contains(field.Name, "HUNTBOT is currently hunting!") {
-				secs := parseDuration(field.Value)
-				h.bot.Log("huntbot will be back in " + strconv.Itoa(secs) + "s")
-				h.resendAfter(float64(secs))
+				h.resendAfterRemaining(parseDuration(field.Value))
 				continue
 			}
 		}
@@ -161,9 +163,27 @@ func (h *Handler) handlePasswordRetry(content string) {
 	h.resendAfter(secs)
 }
 
+// resendAfterRemaining waits out the time OwO says HuntBot has left, plus a
+// small pad, then sends the next autohunt. secs of 0 means the duration could
+// not be parsed, so fall back to a short jittered retry instead of hammering.
+func (h *Handler) resendAfterRemaining(secs int) {
+	if secs <= 0 {
+		h.bot.Log("huntbot remaining time unreadable, retrying shortly")
+		h.resendAfter(briefCooldownMin)
+		return
+	}
+	delay := float64(secs) + resendPadding
+	h.bot.Log("huntbot will be back in " + strconv.Itoa(secs) + "s, resending in " + strconv.Itoa(int(delay)) + "s")
+	if !h.bot.SleepUntil(delay, 0) {
+		return
+	}
+	h.sendAutohunt("", true)
+}
+
 func (h *Handler) resendAfter(seconds float64) {
-	h.bot.CancelSleep()
-	h.bot.SleepUntil(seconds, 30)
+	if !h.bot.SleepUntil(seconds, 30) {
+		return
+	}
 	h.sendAutohunt("", true)
 }
 
