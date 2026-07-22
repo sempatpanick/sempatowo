@@ -11,31 +11,27 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/semptpanick/sempatowo/internal/config"
 	"github.com/semptpanick/sempatowo/internal/util"
 )
 
-func isIsolated() bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv("BROWSER_ISOLATED")))
-	return !(raw == "false" || raw == "0" || raw == "no" || raw == "off")
-}
-
 // OpenBrowserAsync opens the captcha page without blocking the caller.
 // stillNeeded is checked after acquiring a shared-browser slot (non-isolated mode).
-func OpenBrowserAsync(url, profileLabel string, stillNeeded func() bool) {
+func OpenBrowserAsync(url, profileLabel string, env config.BrowserEnv, stillNeeded func() bool) {
 	go func() {
 		defer util.Recover(nil, "captchaBrowser")
-		if BrowserQueueEnabled() {
+		if BrowserQueueEnabled(env.Isolated) {
 			fmt.Printf("[browser] waiting for captcha browser slot [%s]...\n", profileLabel)
-			AcquireBrowserSlot(profileLabel)
+			AcquireBrowserSlot(profileLabel, env.Isolated)
 			if stillNeeded != nil && !stillNeeded() {
 				fmt.Printf("[browser] captcha already solved — skipping open [%s]\n", profileLabel)
-				ReleaseBrowserSlot(profileLabel)
+				ReleaseBrowserSlot(profileLabel, env.Isolated)
 				return
 			}
 			fmt.Printf("[browser] captcha browser slot acquired [%s]\n", profileLabel)
 		}
 
-		if err := openBrowser(url, profileLabel); err != nil {
+		if err := openBrowser(url, profileLabel, env); err != nil {
 			fmt.Printf("[browser] could not open browser [%s]: %v — solve manually: %s\n", profileLabel, err, url)
 			return
 		}
@@ -43,9 +39,9 @@ func OpenBrowserAsync(url, profileLabel string, stillNeeded func() bool) {
 	}()
 }
 
-func openBrowser(url, profileLabel string) error {
-	if isIsolated() {
-		return openIsolatedChrome(url, profileLabel)
+func openBrowser(url, profileLabel string, env config.BrowserEnv) error {
+	if env.Isolated {
+		return openIsolatedChrome(url, profileLabel, env)
 	}
 	return openDefaultBrowser(url)
 }
@@ -63,17 +59,14 @@ func openDefaultBrowser(url string) error {
 	return cmd.Start()
 }
 
-func openIsolatedChrome(url, profileLabel string) error {
-	executable := findChrome()
+func openIsolatedChrome(url, profileLabel string, env config.BrowserEnv) error {
+	executable := findChrome(env.Executable)
 	if executable == "" {
 		fmt.Println("[browser] no Chrome found — falling back to default browser")
 		return openDefaultBrowser(url)
 	}
 
-	profilesDir := strings.TrimSpace(os.Getenv("BROWSER_PROFILES_DIR"))
-	if profilesDir == "" {
-		profilesDir = "./browser-profiles"
-	}
+	profilesDir := env.ProfilesDir
 	profilePath, err := filepath.Abs(filepath.Join(profilesDir, sanitize(profileLabel)))
 	if err != nil {
 		return err
@@ -91,7 +84,7 @@ func openIsolatedChrome(url, profileLabel string) error {
 		"--no-default-browser-check",
 	}
 
-	if ext := resolveExtensionPath(profilesDir); ext != "" {
+	if ext := resolveExtensionPath(profilesDir, env); ext != "" {
 		args = append(args,
 			"--disable-extensions-except="+ext,
 			"--load-extension="+ext,
@@ -112,14 +105,13 @@ func openIsolatedChrome(url, profileLabel string) error {
 	return nil
 }
 
-func resolveExtensionPath(profilesDir string) string {
-	extID := strings.TrimSpace(os.Getenv("BROWSER_EXTENSION_ID"))
+func resolveExtensionPath(profilesDir string, env config.BrowserEnv) string {
 	candidates := []string{}
-	if p := strings.TrimSpace(os.Getenv("BROWSER_EXTENSION_PATH")); p != "" {
-		candidates = append(candidates, p)
+	if env.ExtensionPath != "" {
+		candidates = append(candidates, env.ExtensionPath)
 	}
-	if extID != "" {
-		candidates = append(candidates, filepath.Join(profilesDir, ".extension-cache", extID))
+	if env.ExtensionID != "" {
+		candidates = append(candidates, filepath.Join(profilesDir, ".extension-cache", env.ExtensionID))
 	}
 
 	for _, candidate := range candidates {
@@ -156,9 +148,12 @@ func hasManifest(dir string) bool {
 	return err == nil && !info.IsDir()
 }
 
-func findChrome() string {
-	if p := strings.TrimSpace(os.Getenv("BROWSER_EXECUTABLE")); p != "" && fileExists(p) {
-		return p
+// findChrome prefers the configured executable, then the usual install paths.
+// The os.Getenv calls below are Windows install locations, not app settings, so
+// they stay here rather than moving into config.Env.
+func findChrome(configured string) string {
+	if configured != "" && fileExists(configured) {
+		return configured
 	}
 	var candidates []string
 	switch runtime.GOOS {

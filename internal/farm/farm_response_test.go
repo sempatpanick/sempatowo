@@ -45,7 +45,7 @@ func TestIsOwoCommandResponse(t *testing.T) {
 }
 
 func TestSignalFarmResponseReschedules(t *testing.T) {
-	b := New("token")
+	b := New("token", nil)
 	b.active = true
 	b.ready = true
 	b.farmAwaiting = map[string]struct{}{"hunt": {}}

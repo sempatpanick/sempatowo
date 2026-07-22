@@ -31,7 +31,7 @@ func NewManager(bot BotContext, local *LocalHandler) *Manager {
 }
 
 func (m *Manager) Start() {
-	if m == nil || m.bot == nil || !m.bot.AutoQuest().Enabled || !m.bot.AllowAutoQuest() {
+	if m == nil || m.bot == nil || !m.bot.AutoQuestActive() {
 		return
 	}
 	m.mu.Lock()
@@ -66,7 +66,7 @@ func (m *Manager) stopChan() <-chan struct{} {
 
 func (m *Manager) loop(stop <-chan struct{}) {
 	for {
-		if stopped(stop) || !m.bot.CanSend() || !m.bot.AutoQuest().Enabled {
+		if stopped(stop) || !m.bot.CanSend() || !m.bot.AutoQuestActive() {
 			return
 		}
 
@@ -104,10 +104,7 @@ func (m *Manager) loop(stop <-chan struct{}) {
 			continue
 		}
 
-		min, max := 10.0, 30.0
-		if s.CheckCooldown.Range != nil {
-			min, max = (*s.CheckCooldown.Range)[0], (*s.CheckCooldown.Range)[1]
-		}
+		min, max := s.CheckCooldown.SecondsRange()
 		m.bot.SleepRange(min, max)
 	}
 }
@@ -120,7 +117,7 @@ func (m *Manager) signalQuestUpdated() {
 }
 
 func (m *Manager) HandleRawMessage(event string, data json.RawMessage) {
-	if m == nil || !m.bot.AutoQuest().Enabled {
+	if m == nil || !m.bot.AutoQuestActive() {
 		return
 	}
 	var msg RawMessage

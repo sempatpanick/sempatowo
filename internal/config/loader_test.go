@@ -1,9 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
 func writeConfig(t *testing.T, body string) string {
@@ -16,135 +19,286 @@ func writeConfig(t *testing.T, body string) string {
 	return path
 }
 
-func TestLoadFromFileFillsMissingKeysFromDefaults(t *testing.T) {
-	// A minimal config must still come back fully populated.
-	path := writeConfig(t, `{"channels":{"hunt":"123"}}`)
-
-	got, err := loadFromFile(path)
+func mustLoad(t *testing.T, path string) Settings {
+	t.Helper()
+	s, _, err := loadFromFile(path, "tester")
 	if err != nil {
 		t.Fatalf("loadFromFile: %v", err)
 	}
+	return s
+}
 
-	if got.Channels.Hunt != "123" {
-		t.Errorf("user value lost: hunt = %q, want %q", got.Channels.Hunt, "123")
+func TestLoadFromFileFillsMissingKeysFromDefaults(t *testing.T) {
+	// A minimal config must still come back fully populated.
+	path := writeConfig(t, `{"schemaVersion":1,"defaultChannel":"123456789012345678"}`)
+
+	got := mustLoad(t, path)
+
+	if got.DefaultChannel != "123456789012345678" {
+		t.Errorf("user value lost: defaultChannel = %q", got.DefaultChannel)
 	}
-	if got.OwoID != Defaults().OwoID {
-		t.Errorf("missing top-level key not defaulted: OwoID = %q, want %q", got.OwoID, Defaults().OwoID)
+	if got.OwoBotID != Defaults().OwoBotID {
+		t.Errorf("missing top-level key not defaulted: OwoBotID = %q, want %q", got.OwoBotID, Defaults().OwoBotID)
 	}
-	if got.Interval.SendMessage != Defaults().Interval.SendMessage {
-		t.Errorf("missing nested key not defaulted: SendMessage = %d, want %d",
-			got.Interval.SendMessage, Defaults().Interval.SendMessage)
+	if got.SendMessageInterval != Defaults().SendMessageInterval {
+		t.Errorf("missing key not defaulted: SendMessageInterval = %s, want %s",
+			got.SendMessageInterval, Defaults().SendMessageInterval)
+	}
+}
+
+// The defaults merge has to reach every level, not just the top two. An earlier
+// version walked the JSON by hand and only filled two levels deep; anything
+// below that fell back to Go zero values, which for a bool means "off".
+func TestLoadFromFileMergeIsDeep(t *testing.T) {
+	path := writeConfig(t, `{
+		"schemaVersion": 1,
+		"features": {"gamble": {"coinflip": {"enabled": true}}}
+	}`)
+
+	got := mustLoad(t, path)
+	cf := got.Features.Gamble.Coinflip
+
+	if !cf.Enabled {
+		t.Fatal("explicit coinflip.enabled=true was lost")
+	}
+	if cf.StartValue != Defaults().Features.Gamble.Coinflip.StartValue {
+		t.Errorf("startValue = %d, want default %d", cf.StartValue, Defaults().Features.Gamble.Coinflip.StartValue)
+	}
+	if !cf.Options.Heads {
+		t.Error("coinflip.options.heads lost at depth 4 — bet side would be unset")
+	}
+	if cf.Cooldown.IsZero() {
+		t.Error("coinflip.cooldown lost at depth 4")
 	}
 }
 
 func TestLoadFromFileNestedMergeKeepsSiblings(t *testing.T) {
-	// Supplying one key inside "status" must not blank out the others.
-	path := writeConfig(t, `{"status":{"hunt":false}}`)
+	path := writeConfig(t, `{"schemaVersion":1,"features":{"hunt":{"enabled":false}}}`)
 
-	got, err := loadFromFile(path)
-	if err != nil {
-		t.Fatalf("loadFromFile: %v", err)
-	}
+	got := mustLoad(t, path)
 
-	if got.Status.Hunt {
-		t.Error("explicit status.hunt=false was overwritten by the default")
+	if got.Features.Hunt.Enabled {
+		t.Error("explicit features.hunt.enabled=false was overwritten by the default")
 	}
-	if !got.Status.Battle {
-		t.Error("sibling status.battle lost during nested merge")
+	if !got.Features.Battle.Enabled {
+		t.Error("sibling features.battle lost during merge")
 	}
-	if !got.Status.Pray {
-		t.Error("sibling status.pray lost during nested merge")
+	if !got.Features.Pray.Enabled {
+		t.Error("sibling features.pray lost during merge")
+	}
+	if got.Features.Hunt.Delay.IsZero() {
+		t.Error("features.hunt.delay lost when only enabled was supplied")
 	}
 }
 
 func TestLoadFromFileChecklistDefaultsOff(t *testing.T) {
-	// Existing configs predate status.checklist; they must not silently start
+	// Existing configs predate the checklist loop; they must not silently start
 	// sending checklist commands after upgrading.
-	path := writeConfig(t, `{"status":{"hunt":true}}`)
+	path := writeConfig(t, `{"schemaVersion":1,"features":{"hunt":{"enabled":true}}}`)
 
-	got, err := loadFromFile(path)
-	if err != nil {
-		t.Fatalf("loadFromFile: %v", err)
-	}
-	if got.Status.Checklist {
-		t.Error("status.checklist defaulted to true; upgrade would change behavior")
+	if mustLoad(t, path).Features.Checklist.Enabled {
+		t.Error("features.checklist defaulted to true; upgrade would change behavior")
 	}
 }
 
 func TestLoadFromFileRejectsMalformedJSON(t *testing.T) {
-	path := writeConfig(t, `{"channels":`)
+	path := writeConfig(t, `{"features":`)
 
-	if _, err := loadFromFile(path); err == nil {
+	if _, _, err := loadFromFile(path, ""); err == nil {
 		t.Fatal("expected an error for malformed JSON")
 	}
 }
 
 func TestLoadFromFileMissingFileErrors(t *testing.T) {
-	if _, err := loadFromFile(filepath.Join(t.TempDir(), "absent.json")); err == nil {
+	if _, _, err := loadFromFile(filepath.Join(t.TempDir(), "absent.json"), ""); err == nil {
 		t.Fatal("expected an error for a missing file")
+	}
+}
+
+func TestLoadFromFileReportsUnknownKeys(t *testing.T) {
+	// A typo has to be reported: it otherwise reads as "left at its default".
+	path := writeConfig(t, `{"schemaVersion":1,"features":{"hunt":{"enbaled":true}}}`)
+
+	_, res, err := loadFromFile(path, "")
+	if err != nil {
+		t.Fatalf("loadFromFile: %v", err)
+	}
+	if len(res.Notes) == 0 {
+		t.Fatal("no note for the misspelled key")
+	}
+	if !strings.Contains(res.Notes[0], "enbaled") {
+		t.Errorf("note does not name the bad key: %q", res.Notes[0])
+	}
+}
+
+func TestDurationRoundTrip(t *testing.T) {
+	var d Duration
+	if err := json.Unmarshal([]byte(`"1m30s"`), &d); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if d.Std() != 90*time.Second {
+		t.Errorf("parsed %s, want 1m30s", d)
+	}
+
+	out, err := json.Marshal(d)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != `"1m30s"` {
+		t.Errorf("marshalled %s, want \"1m30s\"", out)
+	}
+}
+
+// A bare number is exactly the ambiguity the string form removes, so it must be
+// rejected rather than guessed at.
+func TestDurationRejectsBareNumber(t *testing.T) {
+	var d Duration
+	if err := json.Unmarshal([]byte(`5000`), &d); err == nil {
+		t.Fatal("expected an error for a unitless number")
+	}
+}
+
+func TestRangePickStaysInBounds(t *testing.T) {
+	r := Range{Min: secs(2), Max: secs(4)}
+	for i := 0; i < 200; i++ {
+		got := r.Pick()
+		if got < 2*time.Second || got > 4*time.Second {
+			t.Fatalf("Pick() = %v, outside [2s, 4s]", got)
+		}
+	}
+}
+
+func TestRangePickHandlesInvertedRange(t *testing.T) {
+	r := Range{Min: secs(5), Max: secs(1)}
+	if got := r.Pick(); got != 5*time.Second {
+		t.Errorf("Pick() = %v on an inverted range, want the min (5s)", got)
 	}
 }
 
 func TestNewLoaderCreatesDefaultConfig(t *testing.T) {
 	dir := t.TempDir()
 
-	l, err := NewLoader(dir, "someone", nil)
+	l, res, err := NewLoader(dir, "229948970904846336", "someone", nil, nil)
 	if err != nil {
 		t.Fatalf("NewLoader: %v", err)
 	}
-
-	if _, err := os.Stat(filepath.Join(dir, "someone.json")); err != nil {
-		t.Errorf("config file not created: %v", err)
+	if !res.Created {
+		t.Error("Created = false for a fresh config")
 	}
-	if l.Get().OwoID != Defaults().OwoID {
+
+	if _, err := os.Stat(filepath.Join(dir, "229948970904846336.json")); err != nil {
+		t.Errorf("config file not created under the user ID: %v", err)
+	}
+	if l.Get().OwoBotID != Defaults().OwoBotID {
 		t.Error("new loader did not start from defaults")
 	}
+	if l.Get().Label != "someone" {
+		t.Errorf("label = %q, want the username", l.Get().Label)
+	}
 }
 
-func TestLoaderGetSetRoundTrip(t *testing.T) {
-	l, err := NewLoader(t.TempDir(), "someone", nil)
+// The file the loader writes must be readable by the loader, including every
+// custom duration type.
+func TestNewLoaderWritesReloadableFile(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := NewLoader(dir, "229948970904846336", "someone", nil, nil); err != nil {
+		t.Fatalf("NewLoader: %v", err)
+	}
+
+	got := mustLoad(t, filepath.Join(dir, "229948970904846336.json"))
+	if got.Features.Hunt.Delay != Defaults().Features.Hunt.Delay {
+		t.Errorf("hunt delay did not survive the round trip: %+v", got.Features.Hunt.Delay)
+	}
+	if err := got.Validate(); err != nil {
+		t.Errorf("the freshly written default config does not validate: %v", err)
+	}
+}
+
+// Config files used to be keyed by username. An existing one gets adopted so
+// upgrading does not silently start from defaults.
+func TestNewLoaderAdoptsUsernameKeyedFile(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "someone.json")
+	if err := os.WriteFile(old, []byte(`{"schemaVersion":1,"prefix":"owo"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	l, res, err := NewLoader(dir, "229948970904846336", "someone", nil, nil)
 	if err != nil {
 		t.Fatalf("NewLoader: %v", err)
 	}
 
-	s := l.Get()
-	s.Channels.Hunt = "999"
-	l.Set(s)
-
-	if got := l.Get().Channels.Hunt; got != "999" {
-		t.Errorf("Get after Set = %q, want %q", got, "999")
+	if l.Get().Prefix != "owo" {
+		t.Errorf("prefix = %q, want the value from the adopted file", l.Get().Prefix)
+	}
+	if fileExists(old) {
+		t.Error("username-keyed file still present after adoption")
+	}
+	if len(res.Notes) == 0 {
+		t.Error("no note about the rename")
 	}
 }
 
-// normalizeDelays only fills in zero values; it deliberately does not reorder
-// an inverted min/max — farm.actionDelay swaps those at the point of use.
-func TestNormalizeDelaysFillsZerosFromDefaults(t *testing.T) {
-	s := Defaults()
-	s.Interval.Hunt = ActionDelay{}
-
-	normalizeDelays(&s)
-
-	if s.Interval.Hunt.MinDelay != Defaults().Interval.Hunt.MinDelay {
-		t.Errorf("MinDelay = %d, want default %d",
-			s.Interval.Hunt.MinDelay, Defaults().Interval.Hunt.MinDelay)
+func TestNewLoaderRejectsInvalidConfig(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "229948970904846336.json")
+	if err := os.WriteFile(path, []byte(`{"schemaVersion":1,"prefix":""}`), 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if s.Interval.Hunt.MaxDelay != Defaults().Interval.Hunt.MaxDelay {
-		t.Errorf("MaxDelay = %d, want default %d",
-			s.Interval.Hunt.MaxDelay, Defaults().Interval.Hunt.MaxDelay)
+
+	if _, _, err := NewLoader(dir, "229948970904846336", "someone", nil, nil); err == nil {
+		t.Fatal("expected NewLoader to reject a config that fails validation")
 	}
 }
 
-func TestNormalizeDelaysPrefersLegacyFastestSlowest(t *testing.T) {
-	// Older configs expressed the range as slowest/fastest.
-	s := Defaults()
-	s.Interval.Hunt = ActionDelay{SlowestTime: 7000, FastestTime: 3000}
-
-	normalizeDelays(&s)
-
-	if s.Interval.Hunt.MinDelay != 7000 {
-		t.Errorf("MinDelay = %d, want 7000 from SlowestTime", s.Interval.Hunt.MinDelay)
+// A bad edit to a running bot's config must not be applied.
+func TestReloadKeepsPreviousSettingsOnInvalidEdit(t *testing.T) {
+	dir := t.TempDir()
+	l, _, err := NewLoader(dir, "229948970904846336", "someone", nil, nil)
+	if err != nil {
+		t.Fatalf("NewLoader: %v", err)
 	}
-	if s.Interval.Hunt.MaxDelay != 3000 {
-		t.Errorf("MaxDelay = %d, want 3000 from FastestTime", s.Interval.Hunt.MaxDelay)
+	before := l.Get()
+
+	// min > max is rejected by Validate.
+	bad := `{"schemaVersion":1,"features":{"hunt":{"enabled":true,"delay":{"min":"30s","max":"5s"}}}}`
+	if err := os.WriteFile(l.Path(), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	changed := false
+	l.reload(func(old, new Settings) { changed = true })
+
+	if changed {
+		t.Error("onChange fired for a config that failed validation")
+	}
+	if l.Get().Features.Hunt.Delay != before.Features.Hunt.Delay {
+		t.Error("invalid delay was applied to the running bot")
+	}
+}
+
+func TestReloadAppliesValidEditAndReportsOldValue(t *testing.T) {
+	dir := t.TempDir()
+	l, _, err := NewLoader(dir, "229948970904846336", "someone", nil, nil)
+	if err != nil {
+		t.Fatalf("NewLoader: %v", err)
+	}
+
+	good := `{"schemaVersion":1,"prefix":"owo"}`
+	if err := os.WriteFile(l.Path(), []byte(good), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotOld, gotNew Settings
+	l.reload(func(old, new Settings) { gotOld, gotNew = old, new })
+
+	if gotOld.Prefix != "w" {
+		t.Errorf("old prefix = %q, want %q", gotOld.Prefix, "w")
+	}
+	if gotNew.Prefix != "owo" {
+		t.Errorf("new prefix = %q, want %q", gotNew.Prefix, "owo")
+	}
+	if l.Get().Prefix != "owo" {
+		t.Errorf("Get().Prefix = %q, want the reloaded value", l.Get().Prefix)
 	}
 }

@@ -5,10 +5,10 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/joho/godotenv"
+	"github.com/semptpanick/sempatowo/internal/config"
 	"github.com/semptpanick/sempatowo/internal/farm"
 	"github.com/semptpanick/sempatowo/internal/util"
 )
@@ -17,26 +17,32 @@ func logPanic(msg string) { log.Print(msg) }
 
 func main() {
 	simulateCaptcha := flag.Bool("simulate-captcha", false, "connect and inject a fake OwO captcha to test pause, browser, and notifications")
+	checkConfig := flag.Bool("check-config", false, "validate the environment and every config file, then exit")
 	flag.Parse()
 
 	_ = godotenv.Load()
 
-	tokenEnv := strings.TrimSpace(os.Getenv("TOKEN"))
-	if tokenEnv == "" {
-		log.Fatal("No TOKEN found in .env")
+	// The whole environment is read and validated here, before anything
+	// connects. A bad CAPTCHA_SERVICE used to surface the first time a captcha
+	// appeared, which is exactly when nobody is watching.
+	env, err := config.LoadEnv()
+	if err != nil {
+		log.Fatalf("Environment error:\n%v", err)
+	}
+	if err := env.EnsureDirs(); err != nil {
+		log.Fatalf("%v", err)
 	}
 
-	tokens := parseTokens(tokenEnv)
-	if len(tokens) == 0 {
-		log.Fatal("No valid TOKEN found in .env")
+	if *checkConfig {
+		os.Exit(runCheckConfig(env))
 	}
 
 	if *simulateCaptcha {
-		if len(tokens) > 1 {
+		if len(env.Tokens) > 1 {
 			log.Println("simulate-captcha uses only the first token")
 		}
 		util.Go(logPanic, "simulate-captcha", func() {
-			b := farm.New(tokens[0])
+			b := farm.New(env.Tokens[0], env)
 			if err := b.RunSimulateCaptcha(); err != nil {
 				log.Printf("Bot error: %v", err)
 			}
@@ -44,9 +50,9 @@ func main() {
 	} else {
 		// Each account gets its own recovered goroutine so a panic in one
 		// does not take down the others sharing this process.
-		for _, token := range tokens {
+		for _, token := range env.Tokens {
 			util.Go(logPanic, "bot", func() {
-				b := farm.New(token)
+				b := farm.New(token, env)
 				if err := b.Run(); err != nil {
 					log.Printf("Bot error: %v", err)
 				}
@@ -57,16 +63,4 @@ func main() {
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM)
 	<-sc
-}
-
-func parseTokens(tokenEnv string) []string {
-	parts := strings.Split(tokenEnv, ",")
-	var tokens []string
-	for _, t := range parts {
-		t = strings.TrimSpace(t)
-		if t != "" {
-			tokens = append(tokens, t)
-		}
-	}
-	return tokens
 }

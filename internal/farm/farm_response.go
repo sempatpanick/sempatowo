@@ -201,10 +201,10 @@ func (b *Bot) signalChecklistResponse() {
 
 func (b *Bot) scheduleNextChecklist() {
 	s := b.settings()
-	if !s.Status.Checklist {
+	if !s.Features.Checklist.Enabled {
 		return
 	}
-	interval := s.Interval.Checklist
+	interval := int(s.Features.Checklist.Delay.Pick() / time.Millisecond)
 	if interval <= 0 {
 		return
 	}

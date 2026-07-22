@@ -46,18 +46,18 @@ var farmCommands = []farmCmdDef{
 	{
 		name: "hunt",
 		enabled: func(b *Bot) bool {
-			return b.settings().Status.Hunt
+			return b.settings().Features.Hunt.Enabled
 		},
-		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		channel: func(b *Bot) string { return b.settings().FarmChannel() },
 		text:    func(b *Bot) string { return b.randomPrefix([]string{"hunt", "h"}) },
 		delayMs: func(b *Bot) int { return b.actionDelay("hunt") },
 	},
 	{
 		name: "battle",
 		enabled: func(b *Bot) bool {
-			return b.settings().Status.Battle
+			return b.settings().Features.Battle.Enabled
 		},
-		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		channel: func(b *Bot) string { return b.settings().FarmChannel() },
 		text:    func(b *Bot) string { return b.randomPrefix([]string{"battle", "b"}) },
 		delayMs: func(b *Bot) int { return b.actionDelay("battle") },
 		startupDelayMs: func(b *Bot) int {
@@ -67,18 +67,18 @@ var farmCommands = []farmCmdDef{
 	{
 		name: "pray",
 		enabled: func(b *Bot) bool {
-			return b.settings().Status.Pray
+			return b.settings().Features.Pray.Enabled
 		},
-		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		channel: func(b *Bot) string { return b.settings().FarmChannel() },
 		text: func(b *Bot) string {
 			txt := b.randomPrefix([]string{"pray"})
-			if target := b.settings().Target.Pray; target != "" {
+			if target := b.settings().Features.Pray.Target; target != "" {
 				txt += " <@" + target + ">"
 			}
 			return txt
 		},
 		delayMs: func(b *Bot) int {
-			return b.settings().Interval.Pray
+			return int(b.settings().Features.Pray.Delay.Pick() / time.Millisecond)
 		},
 		startupDelayMs: func(b *Bot) int {
 			return b.actionDelay("hunt") / 3
@@ -87,54 +87,54 @@ var farmCommands = []farmCmdDef{
 	{
 		name: "curse",
 		enabled: func(b *Bot) bool {
-			return b.settings().Status.Curse
+			return b.settings().Features.Curse.Enabled
 		},
-		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		channel: func(b *Bot) string { return b.settings().FarmChannel() },
 		text: func(b *Bot) string {
 			txt := b.randomPrefix([]string{"curse"})
-			if target := b.settings().Target.Curse; target != "" {
+			if target := b.settings().Features.Curse.Target; target != "" {
 				txt += " <@" + target + ">"
 			}
 			return txt
 		},
 		log: "Cursing",
 		delayMs: func(b *Bot) int {
-			return b.settings().Interval.Curse
+			return int(b.settings().Features.Curse.Delay.Pick() / time.Millisecond)
 		},
 	},
 	{
 		name: "zoo",
 		enabled: func(b *Bot) bool {
-			return b.settings().Status.Zoo
+			return b.settings().Features.Zoo.Enabled
 		},
-		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		channel: func(b *Bot) string { return b.settings().FarmChannel() },
 		text:    func(b *Bot) string { return b.randomPrefix([]string{"zoo", "z", "Z", "Zoo"}) },
 		log:     "Zoo",
 		delayMs: func(b *Bot) int {
-			return b.settings().Interval.Zoo
+			return int(b.settings().Features.Zoo.Delay.Pick() / time.Millisecond)
 		},
 	},
 	{
 		name: "inventory",
 		enabled: func(b *Bot) bool {
-			return b.settings().Status.Inventory
+			return b.settings().Features.Inventory.Enabled
 		},
-		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		channel: func(b *Bot) string { return b.settings().FarmChannel() },
 		text:    func(b *Bot) string { return b.randomPrefix([]string{"inv", "inventory"}) },
 		delayMs: func(b *Bot) int {
-			return b.settings().Interval.Inventory
+			return int(b.settings().Features.Inventory.Delay.Pick() / time.Millisecond)
 		},
 	},
 	{
 		name: "quest",
 		enabled: func(b *Bot) bool {
-			return b.settings().Status.Quest
+			return b.settings().Features.Quest.Enabled
 		},
-		channel: func(b *Bot) string { return b.settings().Channels.Quest },
+		channel: func(b *Bot) string { return b.settings().QuestChannel() },
 		text:    func(b *Bot) string { return b.randomPrefix([]string{"quest", "q"}) },
 		log:     "Checking quest",
 		delayMs: func(b *Bot) int {
-			return b.settings().Interval.Quest.Check
+			return int(b.settings().Features.Quest.Delay.Pick() / time.Millisecond)
 		},
 	},
 }

@@ -7,7 +7,7 @@ import (
 )
 
 func TestBuildSimulateCaptchaMessageRequiresUser(t *testing.T) {
-	b := New("token")
+	b := New("token", nil)
 	if msg := b.buildSimulateCaptchaMessage(); msg != nil {
 		t.Fatal("expected nil without connected user")
 	}

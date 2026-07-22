@@ -41,7 +41,7 @@ func waitDispatched(t *testing.T, b *Bot, name string, timeout time.Duration) {
 // rescheduled for +15s while inventory was the head at +5min) sat overdue
 // until the head's timer fired.
 func TestSchedulerWakesForEarlierPush(t *testing.T) {
-	b := New("token")
+	b := New("token", nil)
 	b.ready = true
 
 	stop := startTestScheduler(b, map[string]time.Time{
@@ -62,7 +62,7 @@ func TestSchedulerWakesForEarlierPush(t *testing.T) {
 // momentarily empty, and the scheduler used to treat that as "done" and exit
 // for good, silently discarding all later reschedules.
 func TestSchedulerSurvivesDrainedHeap(t *testing.T) {
-	b := New("token")
+	b := New("token", nil)
 	b.ready = true
 
 	stop := startTestScheduler(b, map[string]time.Time{

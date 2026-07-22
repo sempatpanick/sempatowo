@@ -2,7 +2,6 @@ package huntbot
 
 import (
 	"math"
-	"math/rand"
 
 	"github.com/semptpanick/sempatowo/internal/config"
 )
@@ -159,13 +158,5 @@ func enabledTraits(input UpgradeDetails) map[string]TraitState {
 }
 
 func upgraderCooldown(st config.HuntbotUpgrader) float64 {
-	s := st.Sleeptime
-	if s.Range != nil {
-		min, max := s.Range[0], s.Range[1]
-		return min + rand.Float64()*(max-min)
-	}
-	if s.Single != nil {
-		return *s.Single
-	}
-	return 0
+	return st.Cooldown.Pick().Seconds()
 }
