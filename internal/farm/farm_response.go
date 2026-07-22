@@ -200,7 +200,11 @@ func (b *Bot) signalChecklistResponse() {
 }
 
 func (b *Bot) scheduleNextChecklist() {
-	interval := b.settings().Interval.Checklist
+	s := b.settings()
+	if !s.Status.Checklist {
+		return
+	}
+	interval := s.Interval.Checklist
 	if interval <= 0 {
 		return
 	}

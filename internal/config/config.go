@@ -32,6 +32,9 @@ type StatusSettings struct {
 	Gems          bool `json:"gems"`
 	Inventory     bool `json:"inventory"`
 	Quest         bool `json:"quest"`
+	// Checklist defaults to false: the loop was disabled in code for a while,
+	// so opting in explicitly keeps existing configs behaving as they did.
+	Checklist bool `json:"checklist"`
 }
 
 type ActionDelay struct {
@@ -170,7 +173,7 @@ func Defaults() Settings {
 		Status: StatusSettings{
 			Hunt: true, Battle: true, Zoo: false, Pray: true, Curse: false,
 			Lootbox: true, LootboxFabled: true, Crate: true, Cookie: false,
-			Gems: true, Inventory: true, Quest: false,
+			Gems: true, Inventory: true, Quest: false, Checklist: false,
 		},
 		Interval: Interval{
 			SendMessage: 5000,

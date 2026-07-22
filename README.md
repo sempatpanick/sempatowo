@@ -19,28 +19,33 @@ cp .env.example .env
 # 2. Edit config/sempatpanick.json (created automatically on first run as config/{username}.json)
 
 # 3. Run
-go run ./cmd/sempatowo
+go run .
 ```
 
 Or build a binary:
 
 ```bash
-go build -o sempatowo.exe ./cmd/sempatowo
-./sempatowo.exe
+go build -o sempatowo .
+./sempatowo
 ```
 
 ## Project layout
 
 ```
-cmd/sempatowo/     Entry point — loads .env, starts one bot per token
+main.go            Entry point — loads .env, starts one bot per token
 internal/
   config/          JSON config types, defaults, hot-reload
-  farm/            Main bot: timers, queue, OwO message handlers
+  farm/            Main bot: connection supervisor, timers, queue, OwO handlers
   huntbot/         HuntBot autohunt + essence upgrades + password captcha
+  gamble/          Coinflip, slots, blackjack
+  quest/           Quest parsing (OCR) and execution
+  daily/           Standalone daily claim at PST midnight
   captcha/         OwO captcha browser + optional auto-solver
+  notify/          Desktop notifications (per-OS)
   items/           Inventory item IDs (gems, crates, lootboxes)
-  util/            Logger and helpers
+  util/            Logger, panic recovery, helpers
 config/            Per-account JSON (named after Discord username)
+deps/              Vendored discordgo-self fork (see the replace in go.mod)
 ```
 
 ## Configuration
@@ -53,6 +58,7 @@ Key settings:
 | ----------------------------------------- | ---------------------------------------------------------- |
 | `channels.hunt`                           | Discord channel ID for OwO commands                        |
 | `status.hunt` / `status.battle`           | Enable manual hunt/battle loops                            |
+| `status.checklist`                        | Enable the periodic checklist loop (off by default)        |
 | `interval.hunt.minDelay` / `maxDelay`     | Random delay between hunts (ms)                            |
 | `huntbot.enabled`                         | Use HuntBot instead of manual hunt                         |
 | `checklist_completed`                     | Stop farm when checklist is fully done                     |
@@ -83,7 +89,7 @@ Key settings:
 
 Good files to read as a beginner:
 
-1. `cmd/sempatowo/main.go` — small entry point
+1. `main.go` — small entry point
 2. `internal/config/config.go` — structs + JSON tags
 3. `internal/farm/farm.go` — main logic (read in sections)
 4. `internal/huntbot/handler.go` — interface pattern (`BotContext`)
