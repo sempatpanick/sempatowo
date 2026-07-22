@@ -46,11 +46,11 @@ func (c *autoQuestCtx) OCRApiKey() string {
 func (c *autoQuestCtx) CanEnableQuestCmds() bool {
 	return c.bot.settings().AutoQuest.EnableCommandsToCompleteQuest
 }
-func (c *autoQuestCtx) IsHuntEnabled() bool    { return c.bot.settings().Status.Hunt }
-func (c *autoQuestCtx) IsBattleEnabled() bool  { return c.bot.settings().Status.Battle }
-func (c *autoQuestCtx) IsCookieEnabled() bool  { return c.bot.settings().Status.Cookie }
-func (c *autoQuestCtx) IsPrayEnabled() bool    { return c.bot.settings().Status.Pray }
-func (c *autoQuestCtx) IsCurseEnabled() bool   { return c.bot.settings().Status.Curse }
+func (c *autoQuestCtx) IsHuntEnabled() bool   { return c.bot.settings().Status.Hunt }
+func (c *autoQuestCtx) IsBattleEnabled() bool { return c.bot.settings().Status.Battle }
+func (c *autoQuestCtx) IsCookieEnabled() bool { return c.bot.settings().Status.Cookie }
+func (c *autoQuestCtx) IsPrayEnabled() bool   { return c.bot.settings().Status.Pray }
+func (c *autoQuestCtx) IsCurseEnabled() bool  { return c.bot.settings().Status.Curse }
 func (c *autoQuestCtx) IsGambleEnabled() bool {
 	g := c.bot.settings().Gamble
 	return g.Coinflip.Enabled || g.Slots.Enabled || g.Blackjack.Enabled
@@ -95,7 +95,7 @@ func (c *autoQuestCtx) SendMessage(channelID, text string) error {
 	c.bot.enqueue(channelID, text)
 	return nil
 }
-func (c *autoQuestCtx) CanSend() bool { return c.bot.canSend() }
+func (c *autoQuestCtx) CanSend() bool  { return c.bot.canSend() }
 func (c *autoQuestCtx) Log(msg string) { c.bot.logInfo(msg) }
 func (c *autoQuestCtx) SleepRange(min, max float64) {
 	if max <= min {

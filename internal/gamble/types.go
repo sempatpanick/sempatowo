@@ -10,8 +10,8 @@ const (
 )
 
 const (
-	briefCooldownMin = 0.7
-	briefCooldownMax = 2.7
+	briefCooldownMin    = 0.7
+	briefCooldownMax    = 2.7
 	moderateCooldownMin = 70.0
 	moderateCooldownMax = 200.0
 )

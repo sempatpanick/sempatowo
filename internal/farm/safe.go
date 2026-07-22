@@ -85,4 +85,3 @@ func firstEmbed(msg *discord.Message) *discord.Embed {
 	}
 	return msg.Embeds[0]
 }
-

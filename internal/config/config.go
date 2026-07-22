@@ -35,10 +35,10 @@ type StatusSettings struct {
 }
 
 type ActionDelay struct {
-	MinDelay     int `json:"minDelay"`
-	MaxDelay     int `json:"maxDelay"`
-	SlowestTime  int `json:"slowestTime,omitempty"`
-	FastestTime  int `json:"fastestTime,omitempty"`
+	MinDelay    int `json:"minDelay"`
+	MaxDelay    int `json:"maxDelay"`
+	SlowestTime int `json:"slowestTime,omitempty"`
+	FastestTime int `json:"fastestTime,omitempty"`
 }
 
 type Interval struct {
@@ -76,10 +76,10 @@ type Huntbot struct {
 }
 
 type HuntbotUpgrader struct {
-	Enabled   bool              `json:"enabled"`
-	Sleeptime jsonSleeptime     `json:"sleeptime"`
-	Traits    HuntbotTraits     `json:"traits"`
-	Weights   HuntbotWeights    `json:"weights"`
+	Enabled   bool           `json:"enabled"`
+	Sleeptime jsonSleeptime  `json:"sleeptime"`
+	Traits    HuntbotTraits  `json:"traits"`
+	Weights   HuntbotWeights `json:"weights"`
 }
 
 // jsonSleeptime accepts either a number or [min, max] in JSON.
@@ -228,7 +228,7 @@ func Defaults() Settings {
 			Enabled:     false,
 			CashToSpend: 10000,
 			Upgrader: HuntbotUpgrader{
-				Enabled: true,
+				Enabled:   true,
 				Sleeptime: jsonSleeptime{Range: &[2]float64{10, 15}},
 				Traits: HuntbotTraits{
 					Efficiency: true, Duration: true, Cost: true,

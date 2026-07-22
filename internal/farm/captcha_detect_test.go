@@ -18,8 +18,8 @@ func TestDetectCaptchaExplicitPrompt(t *testing.T) {
 func TestDetectCaptchaEmbedMention(t *testing.T) {
 	id, _ := discord.ParseSnowflake("229948970904846336")
 	msg := &discord.Message{
-		GuildID: 1,
-		Content: "",
+		GuildID:  1,
+		Content:  "",
 		Mentions: []*discord.User{{ID: id}},
 		Embeds: []*discord.Embed{{
 			Description: "**⚠️ | sempatpanick**, please check your DMs and complete captcha!",
@@ -66,8 +66,8 @@ func TestDetectCaptchaRealHumanLink(t *testing.T) {
 		"<:blank:427371936482328596> **|** P" + zw + "lease complet" + zw + "e th" + zw + "is with" + zw + "in 1" + zw + "0 m" + zw + "inutes o" + zw + "r i" + zw + "t m" + zw + "ay re" + zw + "sult i" + zw + "n a" + zw + " ban" + zw + "!"
 	id, _ := discord.ParseSnowflake("229948970904846336")
 	msg := &discord.Message{
-		GuildID: 1,
-		Content: content,
+		GuildID:  1,
+		Content:  content,
 		Mentions: []*discord.User{{ID: id}},
 	}
 	uid := "229948970904846336"
@@ -81,8 +81,8 @@ func TestDetectCaptchaVerifyCount(t *testing.T) {
 	content := "⚠️ **|** <@229948970904846336>! Pl" + zw + "ease compl" + zw + "ete yo" + zw + "ur capt" + zw + "cha t" + zw + "o ve" + zw + "rify th" + zw + "at yo" + zw + "u ar" + zw + "e hu" + zw + "man! (5/5)"
 	id, _ := discord.ParseSnowflake("229948970904846336")
 	msg := &discord.Message{
-		GuildID: 1,
-		Content: content,
+		GuildID:  1,
+		Content:  content,
 		Mentions: []*discord.User{{ID: id}},
 	}
 	if !detectCaptcha(msg, normalizeZW(content), "sempatpanick", "229948970904846336", "sempatpanick") {

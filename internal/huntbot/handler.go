@@ -11,10 +11,10 @@ import (
 )
 
 var (
-	passwordResetRe   = regexp.MustCompile(`Password will reset in (\d+)`)
-	huntbotTimeRe     = regexp.MustCompile(`(\d+)([DHM])`)
-	levelProgressRe   = regexp.MustCompile(`Lvl (\d+) \[(\d+)/\d+\]`)
-	essenceRe         = regexp.MustCompile(`Animal Essence - ` + "`" + `(\d{1,3}(?:,\d{3})*)` + "`")
+	passwordResetRe = regexp.MustCompile(`Password will reset in (\d+)`)
+	huntbotTimeRe   = regexp.MustCompile(`(\d+)([DHM])`)
+	levelProgressRe = regexp.MustCompile(`Lvl (\d+) \[(\d+)/\d+\]`)
+	essenceRe       = regexp.MustCompile(`Animal Essence - ` + "`" + `(\d{1,3}(?:,\d{3})*)` + "`")
 )
 
 const briefCooldownMin = 5.0

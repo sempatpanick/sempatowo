@@ -16,9 +16,9 @@ const (
 
 // RawMessage is a Discord gateway message payload (components v2 aware).
 type RawMessage struct {
-	ID        string          `json:"id"`
-	ChannelID string          `json:"channel_id"`
-	GuildID   string          `json:"guild_id"`
+	ID        string `json:"id"`
+	ChannelID string `json:"channel_id"`
+	GuildID   string `json:"guild_id"`
 	Author    struct {
 		ID string `json:"id"`
 	} `json:"author"`
@@ -41,11 +41,11 @@ type componentNode struct {
 }
 
 type QuestUI struct {
-	ClaimCustomID       string
-	QuestImageURL       string
-	AllDone             bool
-	NextQuestTimestamp  int64
-	ValidQuestLog       bool
+	ClaimCustomID      string
+	QuestImageURL      string
+	AllDone            bool
+	NextQuestTimestamp int64
+	ValidQuestLog      bool
 }
 
 var tsRe = regexp.MustCompile(`<t:(\d+):f>`)
