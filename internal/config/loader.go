@@ -220,4 +220,3 @@ func (j jsonSecRange) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(nil)
 }
-

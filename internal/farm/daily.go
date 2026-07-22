@@ -13,17 +13,17 @@ func (b *Bot) newDailyContext() *dailyCtx {
 	return &dailyCtx{bot: b}
 }
 
-func (c *dailyCtx) UserID() string             { return c.bot.userID() }
-func (c *dailyCtx) HuntChannelID() string    { return c.bot.settings().Channels.Hunt }
-func (c *dailyCtx) OwoBotID() string         { return c.bot.settings().OwoID }
-func (c *dailyCtx) AutoDaily() bool          { return c.bot.settings().AutoDaily }
-func (c *dailyCtx) CashCheck() bool          { return c.bot.settings().CashCheck }
+func (c *dailyCtx) UserID() string                    { return c.bot.userID() }
+func (c *dailyCtx) HuntChannelID() string             { return c.bot.settings().Channels.Hunt }
+func (c *dailyCtx) OwoBotID() string                  { return c.bot.settings().OwoID }
+func (c *dailyCtx) AutoDaily() bool                   { return c.bot.settings().AutoDaily }
+func (c *dailyCtx) CashCheck() bool                   { return c.bot.settings().CashCheck }
 func (c *dailyCtx) RandomPrefix(cmds []string) string { return c.bot.randomPrefix(cmds) }
 func (c *dailyCtx) SendMessage(channelID, text string) error {
 	c.bot.enqueue(channelID, text)
 	return nil
 }
-func (c *dailyCtx) CanSend() bool { return c.bot.canSend() }
+func (c *dailyCtx) CanSend() bool  { return c.bot.canSend() }
 func (c *dailyCtx) Log(msg string) { c.bot.logInfo(msg) }
 func (c *dailyCtx) Nickname() string {
 	client := c.bot.discordClient()

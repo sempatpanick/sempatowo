@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 var (
@@ -78,6 +80,7 @@ func (g *coinflipGame) loseStreak() int {
 
 func (g *coinflipGame) scheduleNext(stop <-chan struct{}) {
 	go func() {
+		defer util.Recover(g.m.bot.Log, "coinflipCooldown")
 		min, max := g.m.bot.Gamble().Coinflip.CooldownSec()
 		sleepRange(min, max)
 		if stopped(stop) {

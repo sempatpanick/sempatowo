@@ -7,14 +7,14 @@ import (
 
 // LocalHandler stores quests for one account.
 type LocalHandler struct {
-	mu                  sync.Mutex
-	userID              string
-	global              *GlobalHandler
-	apiKey              string
-	quests              []LocalQuest
-	nextQuestTimestamp  int64
-	allDone             bool
-	helpPosted          bool
+	mu                 sync.Mutex
+	userID             string
+	global             *GlobalHandler
+	apiKey             string
+	quests             []LocalQuest
+	nextQuestTimestamp int64
+	allDone            bool
+	helpPosted         bool
 }
 
 func NewLocalHandler(userID, apiKey string) *LocalHandler {

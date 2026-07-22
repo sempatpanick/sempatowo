@@ -28,7 +28,7 @@ func TestSummarizeOwOMessage(t *testing.T) {
 			want:    "Inventory → 3 items · cgem3×8, ugem3×3, rgem3×3",
 		},
 		{
-			name: "slots skipped",
+			name:    "slots skipped",
 			content: "**  `___SLOTS___`**\n` ` <a:slot_gif:417473893368987649> <a:slot_gif:417473893368987649> <a:slot_gif:417473893368987649> ` ` sempatpanick bet <:cowoncy:416043450337853441> 3,000\n  `|         |`\n  `|         |`",
 			want:    "",
 		},

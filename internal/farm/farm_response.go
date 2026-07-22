@@ -5,6 +5,7 @@ import (
 	"time"
 
 	discord "github.com/hytams/discordgo-self"
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 const farmResponseTimeout = 30 * time.Second
@@ -110,6 +111,7 @@ func (b *Bot) markFarmAwaiting(name string) {
 	b.mu.Unlock()
 
 	go func() {
+		defer util.Recover(b.logDanger, "farmResponseTimeout:"+name)
 		time.Sleep(farmResponseTimeout)
 		b.mu.Lock()
 		_, pending := b.farmAwaiting[name]
@@ -173,6 +175,7 @@ func (b *Bot) markChecklistAwaiting() {
 	b.mu.Unlock()
 
 	go func() {
+		defer util.Recover(b.logDanger, "checklistResponseTimeout")
 		time.Sleep(farmResponseTimeout)
 		b.mu.Lock()
 		if !b.checklistAwaiting {

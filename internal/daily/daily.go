@@ -101,6 +101,7 @@ func (m *Manager) sendDaily() {
 
 func (m *Manager) scheduleAfterResponse(stop <-chan struct{}) {
 	go func() {
+		defer util.Recover(m.bot.Log, "dailyLoop")
 		sec := util.SecondsUntilNextPSTMidnight()
 		sleepUntil(stop, sec)
 		if stopped(stop) || !m.bot.CanSend() || !m.bot.AutoDaily() {

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	discord "github.com/hytams/discordgo-self"
@@ -38,22 +39,27 @@ type Bot struct {
 	token  string
 	client *discord.Client
 	log    *util.Logger
-	cfg    *config.Loader
 
-	mu                  sync.Mutex
-	active              bool // false during captcha
-	ready               bool
-	captchaSolving        bool
-	huntbotStarted        bool
-	huntbot             *huntbot.Handler
-	gamble              *gamble.Manager
-	daily               *daily.Manager
-	autoQuest           *quest.Manager
-	sleepMu               sync.Mutex
-	sleep                 *sleepHandle
+	// cfg is installed by onReady on the gateway goroutine while message
+	// handlers, timers, and the queue goroutine read it concurrently, so the
+	// pointer itself is stored atomically. config.Loader guards its own
+	// contents; this only protects the handoff.
+	cfg atomic.Pointer[config.Loader]
 
-	queue       []queuedMsg
-	queueStop   chan struct{}
+	mu             sync.Mutex
+	active         bool // false during captcha
+	ready          bool
+	captchaSolving bool
+	huntbotStarted bool
+	huntbot        *huntbot.Handler
+	gamble         *gamble.Manager
+	daily          *daily.Manager
+	autoQuest      *quest.Manager
+	sleepMu        sync.Mutex
+	sleep          *sleepHandle
+
+	queue        []queuedMsg
+	queueStop    chan struct{}
 	queueRunning bool
 
 	gambleWaitMu   sync.Mutex
@@ -68,13 +74,13 @@ type Bot struct {
 
 	checklistAwaiting bool
 
-	timerCancel map[string]func()
-	inventory   map[string]int
-	checklist   checklistState
-	totalXP     int
-	totalHunts  int
+	timerCancel   map[string]func()
+	inventory     map[string]int
+	checklist     checklistState
+	totalXP       int
+	totalHunts    int
 	lastBattleLog string
-	questOwo    *questProgress
+	questOwo      *questProgress
 
 	captchaTimers []*time.Timer
 
@@ -114,19 +120,26 @@ func (b *Bot) run() error {
 	}
 	b.client = client
 
+	// These run on the library's goroutines and parse untrusted OwO text, so
+	// each one recovers rather than letting a bad message kill the process
+	// (and with it every other account sharing it).
 	client.OnReady(func() {
+		defer util.Recover(b.logDanger, "onReady")
 		b.onReady()
 	})
 
 	client.OnMessageCreate(func(msg *discord.Message) {
+		defer util.Recover(b.logDanger, "onMessage")
 		b.onMessage(msg)
 	})
 
 	client.OnMessageUpdate(func(msg *discord.Message) {
+		defer util.Recover(b.logDanger, "onMessageUpdate")
 		b.onMessageUpdate(msg)
 	})
 
 	client.OnRawEvent(func(event string, data json.RawMessage) {
+		defer util.Recover(b.logDanger, "onRawGateway")
 		b.onRawGateway(event, data)
 	})
 
@@ -157,9 +170,9 @@ func (b *Bot) onReady() {
 		b.log.Danger("Config error: " + err.Error())
 		return
 	}
-	b.cfg = loader
+	b.cfg.Store(loader)
 
-	s := b.cfg.Get()
+	s := loader.Get()
 	b.log.Info(fmt.Sprintf("Channels — hunt: %s, quest: %s", s.Channels.Hunt, s.Channels.Quest))
 
 	if b.simulateCaptcha {
@@ -171,24 +184,29 @@ func (b *Bot) onReady() {
 	// b.startChecklistLoop()
 
 	time.AfterFunc(8*time.Second, func() {
+		defer util.Recover(b.logDanger, "startupDelay")
+		// Test and set under a single lock. Discord re-dispatches READY on
+		// resume, and two callbacks racing across separate critical sections
+		// could both pass the check and start automation twice.
 		b.mu.Lock()
-		ready := !b.ready && b.canSendLocked()
+		start := !b.ready && b.canSendLocked()
+		if start {
+			b.ready = true
+		}
 		b.mu.Unlock()
-		if !ready {
+		if !start {
 			return
 		}
-		b.mu.Lock()
-		b.ready = true
-		b.mu.Unlock()
 		b.startAutomation()
 	})
 }
 
 func (b *Bot) settings() config.Settings {
-	if b.cfg == nil {
+	loader := b.cfg.Load()
+	if loader == nil {
 		return config.Defaults()
 	}
-	return b.cfg.Get()
+	return loader.Get()
 }
 
 func (b *Bot) onMessage(msg *discord.Message) {
@@ -396,7 +414,7 @@ func (b *Bot) handleCaptcha() {
 	b.stopDaily()
 	b.stopAutoQuest()
 
-	go b.runCaptchaFlow()
+	util.Go(b.logDanger, "captchaFlow", b.runCaptchaFlow)
 }
 
 func (b *Bot) runCaptchaFlow() {
@@ -420,7 +438,7 @@ func (b *Bot) runCaptchaFlow() {
 	}
 
 	b.logInfo("Auto-solver running in background (browser already opened as fallback)...")
-	go func() {
+	util.Go(b.logDanger, "captchaSolve", func() {
 		result := captcha.Solve(b.token)
 		if !stillNeeded() {
 			return
@@ -430,7 +448,7 @@ func (b *Bot) runCaptchaFlow() {
 			return
 		}
 		b.logDanger("Auto-solve failed — use the browser tab: " + result.Message)
-	}()
+	})
 }
 
 func (b *Bot) profileLabel() string {
@@ -450,6 +468,7 @@ func (b *Bot) scheduleCaptchaWarnings() {
 		delay := captchaDeadline - time.Duration(minLeft)*time.Minute
 		minLeft := minLeft
 		t := time.AfterFunc(delay, func() {
+			defer util.Recover(b.logDanger, "captchaWarning")
 			b.mu.Lock()
 			solving := b.captchaSolving
 			b.mu.Unlock()
@@ -472,6 +491,7 @@ func (b *Bot) scheduleCaptchaWarnings() {
 		b.mu.Unlock()
 	}
 	t := time.AfterFunc(captchaDeadline, func() {
+		defer util.Recover(b.logDanger, "captchaDeadline")
 		captcha.ReleaseBrowserSlot(profile)
 		b.logDanger("Captcha deadline reached — account may be banned. Solve manually if the page is still open.")
 	})
@@ -705,6 +725,7 @@ func (b *Bot) runOwoQuest(done <-chan struct{}, intervalMs int, channel string) 
 		intervalMs = 32000
 	}
 	go func() {
+		defer util.Recover(b.logDanger, "owoQuestLoop")
 		interval := time.Duration(intervalMs) * time.Millisecond
 		for {
 			delay := time.NewTimer(interval)
@@ -838,6 +859,7 @@ func (b *Bot) scheduleTimer(name string, delayMs int, fn func()) {
 	b.timerCancel[name] = cancel
 
 	go func() {
+		defer util.Recover(b.logDanger, "timer:"+name)
 		select {
 		case <-time.After(time.Duration(delayMs) * time.Millisecond):
 		case <-done:
@@ -940,7 +962,7 @@ func (b *Bot) startQueueLocked() {
 	}
 	b.queueRunning = true
 	stop := b.queueStop
-	go b.runQueue(stop)
+	util.Go(b.logDanger, "queue", func() { b.runQueue(stop) })
 }
 
 func (b *Bot) runQueue(stop <-chan struct{}) {
@@ -1114,7 +1136,7 @@ func (b *Bot) startHuntbotIfNeeded() {
 
 	ctx := b.newHuntbotContext()
 	b.huntbot = huntbot.NewHandler(ctx, b.token)
-	go b.huntbot.Start()
+	util.Go(b.logDanger, "huntbot", b.huntbot.Start)
 }
 
 func (b *Bot) stopHuntbot() {
@@ -1212,7 +1234,7 @@ func (c *huntbotCtx) Nickname() string {
 	}
 	return c.bot.username()
 }
-func (c *huntbotCtx) Settings() config.Huntbot { return c.bot.settings().Huntbot }
+func (c *huntbotCtx) Settings() config.Huntbot          { return c.bot.settings().Huntbot }
 func (c *huntbotCtx) RandomPrefix(cmds []string) string { return c.bot.randomPrefix(cmds) }
 func (c *huntbotCtx) CanSend() bool {
 	if c == nil || c.bot == nil {

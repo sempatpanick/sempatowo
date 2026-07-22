@@ -78,10 +78,10 @@ func (c *gambleCtx) Nickname() string {
 	}
 	return c.bot.username()
 }
-func (c *gambleCtx) Username() string { return c.bot.username() }
-func (c *gambleCtx) UserID() string   { return c.bot.userID() }
-func (c *gambleCtx) CashCheck() bool        { return c.bot.settings().CashCheck }
-func (c *gambleCtx) Gamble() config.Gamble  { return c.bot.settings().Gamble }
+func (c *gambleCtx) Username() string                  { return c.bot.username() }
+func (c *gambleCtx) UserID() string                    { return c.bot.userID() }
+func (c *gambleCtx) CashCheck() bool                   { return c.bot.settings().CashCheck }
+func (c *gambleCtx) Gamble() config.Gamble             { return c.bot.settings().Gamble }
 func (c *gambleCtx) RandomPrefix(cmds []string) string { return c.bot.randomPrefix(cmds) }
 func (c *gambleCtx) SendMessage(channelID, text string) error {
 	c.bot.enqueue(channelID, text)
@@ -94,8 +94,8 @@ func (c *gambleCtx) SendGambleBet(channelID, game, text string) error {
 func (c *gambleCtx) SignalGambleResult(game string) {
 	c.bot.signalGambleResult(game)
 }
-func (c *gambleCtx) CanSend() bool { return c.bot.canSend() }
-func (c *gambleCtx) Log(msg string) { c.bot.logInfo(msg) }
+func (c *gambleCtx) CanSend() bool    { return c.bot.canSend() }
+func (c *gambleCtx) Log(msg string)   { c.bot.logInfo(msg) }
 func (c *gambleCtx) Debug(msg string) { c.bot.logDebug(msg) }
 func (c *gambleCtx) Sleep(seconds float64) {
 	if seconds > 0 {

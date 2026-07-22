@@ -3,6 +3,8 @@ package farm
 import (
 	"container/heap"
 	"time"
+
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 type scheduledCmd struct {
@@ -41,100 +43,100 @@ type farmCmdDef struct {
 }
 
 var farmCommands = []farmCmdDef{
-		{
-			name: "hunt",
-			enabled: func(b *Bot) bool {
-				return b.settings().Status.Hunt
-			},
-			channel: func(b *Bot) string { return b.settings().Channels.Hunt },
-			text:    func(b *Bot) string { return b.randomPrefix([]string{"hunt", "h"}) },
-			delayMs: func(b *Bot) int { return b.actionDelay("hunt") },
+	{
+		name: "hunt",
+		enabled: func(b *Bot) bool {
+			return b.settings().Status.Hunt
 		},
-		{
-			name: "battle",
-			enabled: func(b *Bot) bool {
-				return b.settings().Status.Battle
-			},
-			channel: func(b *Bot) string { return b.settings().Channels.Hunt },
-			text:    func(b *Bot) string { return b.randomPrefix([]string{"battle", "b"}) },
-			delayMs: func(b *Bot) int { return b.actionDelay("battle") },
-			startupDelayMs: func(b *Bot) int {
-				return b.actionDelay("battle") / 2
-			},
+		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		text:    func(b *Bot) string { return b.randomPrefix([]string{"hunt", "h"}) },
+		delayMs: func(b *Bot) int { return b.actionDelay("hunt") },
+	},
+	{
+		name: "battle",
+		enabled: func(b *Bot) bool {
+			return b.settings().Status.Battle
 		},
-		{
-			name: "pray",
-			enabled: func(b *Bot) bool {
-				return b.settings().Status.Pray
-			},
-			channel: func(b *Bot) string { return b.settings().Channels.Hunt },
-			text: func(b *Bot) string {
-				txt := b.randomPrefix([]string{"pray"})
-				if target := b.settings().Target.Pray; target != "" {
-					txt += " <@" + target + ">"
-				}
-				return txt
-			},
-			delayMs: func(b *Bot) int {
-				return b.settings().Interval.Pray
-			},
-			startupDelayMs: func(b *Bot) int {
-				return b.actionDelay("hunt") / 3
-			},
+		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		text:    func(b *Bot) string { return b.randomPrefix([]string{"battle", "b"}) },
+		delayMs: func(b *Bot) int { return b.actionDelay("battle") },
+		startupDelayMs: func(b *Bot) int {
+			return b.actionDelay("battle") / 2
 		},
-		{
-			name: "curse",
-			enabled: func(b *Bot) bool {
-				return b.settings().Status.Curse
-			},
-			channel: func(b *Bot) string { return b.settings().Channels.Hunt },
-			text: func(b *Bot) string {
-				txt := b.randomPrefix([]string{"curse"})
-				if target := b.settings().Target.Curse; target != "" {
-					txt += " <@" + target + ">"
-				}
-				return txt
-			},
-			log: "Cursing",
-			delayMs: func(b *Bot) int {
-				return b.settings().Interval.Curse
-			},
+	},
+	{
+		name: "pray",
+		enabled: func(b *Bot) bool {
+			return b.settings().Status.Pray
 		},
-		{
-			name: "zoo",
-			enabled: func(b *Bot) bool {
-				return b.settings().Status.Zoo
-			},
-			channel: func(b *Bot) string { return b.settings().Channels.Hunt },
-			text:    func(b *Bot) string { return b.randomPrefix([]string{"zoo", "z", "Z", "Zoo"}) },
-			log:     "Zoo",
-			delayMs: func(b *Bot) int {
-				return b.settings().Interval.Zoo
-			},
+		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		text: func(b *Bot) string {
+			txt := b.randomPrefix([]string{"pray"})
+			if target := b.settings().Target.Pray; target != "" {
+				txt += " <@" + target + ">"
+			}
+			return txt
 		},
-		{
-			name: "inventory",
-			enabled: func(b *Bot) bool {
-				return b.settings().Status.Inventory
-			},
-			channel: func(b *Bot) string { return b.settings().Channels.Hunt },
-			text:    func(b *Bot) string { return b.randomPrefix([]string{"inv", "inventory"}) },
-			delayMs: func(b *Bot) int {
-				return b.settings().Interval.Inventory
-			},
+		delayMs: func(b *Bot) int {
+			return b.settings().Interval.Pray
 		},
-		{
-			name: "quest",
-			enabled: func(b *Bot) bool {
-				return b.settings().Status.Quest
-			},
-			channel: func(b *Bot) string { return b.settings().Channels.Quest },
-			text:    func(b *Bot) string { return b.randomPrefix([]string{"quest", "q"}) },
-			log:     "Checking quest",
-			delayMs: func(b *Bot) int {
-				return b.settings().Interval.Quest.Check
-			},
+		startupDelayMs: func(b *Bot) int {
+			return b.actionDelay("hunt") / 3
 		},
+	},
+	{
+		name: "curse",
+		enabled: func(b *Bot) bool {
+			return b.settings().Status.Curse
+		},
+		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		text: func(b *Bot) string {
+			txt := b.randomPrefix([]string{"curse"})
+			if target := b.settings().Target.Curse; target != "" {
+				txt += " <@" + target + ">"
+			}
+			return txt
+		},
+		log: "Cursing",
+		delayMs: func(b *Bot) int {
+			return b.settings().Interval.Curse
+		},
+	},
+	{
+		name: "zoo",
+		enabled: func(b *Bot) bool {
+			return b.settings().Status.Zoo
+		},
+		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		text:    func(b *Bot) string { return b.randomPrefix([]string{"zoo", "z", "Z", "Zoo"}) },
+		log:     "Zoo",
+		delayMs: func(b *Bot) int {
+			return b.settings().Interval.Zoo
+		},
+	},
+	{
+		name: "inventory",
+		enabled: func(b *Bot) bool {
+			return b.settings().Status.Inventory
+		},
+		channel: func(b *Bot) string { return b.settings().Channels.Hunt },
+		text:    func(b *Bot) string { return b.randomPrefix([]string{"inv", "inventory"}) },
+		delayMs: func(b *Bot) int {
+			return b.settings().Interval.Inventory
+		},
+	},
+	{
+		name: "quest",
+		enabled: func(b *Bot) bool {
+			return b.settings().Status.Quest
+		},
+		channel: func(b *Bot) string { return b.settings().Channels.Quest },
+		text:    func(b *Bot) string { return b.randomPrefix([]string{"quest", "q"}) },
+		log:     "Checking quest",
+		delayMs: func(b *Bot) int {
+			return b.settings().Interval.Quest.Check
+		},
+	},
 }
 
 func (b *Bot) farmCmdByName(name string) *farmCmdDef {
@@ -190,7 +192,7 @@ func (b *Bot) startFarmScheduler() {
 	}
 	b.mu.Unlock()
 
-	go b.runFarmScheduler(stop, wake)
+	util.Go(b.logDanger, "farmScheduler", func() { b.runFarmScheduler(stop, wake) })
 }
 
 func (b *Bot) stopFarmSchedulerLocked() {

@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 func isIsolated() bool {
@@ -21,6 +23,7 @@ func isIsolated() bool {
 // stillNeeded is checked after acquiring a shared-browser slot (non-isolated mode).
 func OpenBrowserAsync(url, profileLabel string, stillNeeded func() bool) {
 	go func() {
+		defer util.Recover(nil, "captchaBrowser")
 		if BrowserQueueEnabled() {
 			fmt.Printf("[browser] waiting for captcha browser slot [%s]...\n", profileLabel)
 			AcquireBrowserSlot(profileLabel)

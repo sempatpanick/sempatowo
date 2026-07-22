@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 var bjCardRe = regexp.MustCompile(`\d+`)
@@ -126,6 +128,7 @@ func (g *blackjackGame) loseStreak() int {
 
 func (g *blackjackGame) scheduleNext(stop <-chan struct{}) {
 	go func() {
+		defer util.Recover(g.m.bot.Log, "blackjackCooldown")
 		min, max := g.m.bot.Gamble().Blackjack.CooldownSec()
 		sleepRange(min, max)
 		if stopped(stop) {

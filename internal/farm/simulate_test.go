@@ -20,8 +20,8 @@ func TestSimulateCaptchaMessageDetects(t *testing.T) {
 		t.Fatal(err)
 	}
 	msg := &discord.Message{
-		GuildID: 1,
-		Content: "**⚠️ | testuser**, please complete your captcha to verify that you are human! (simulate)",
+		GuildID:  1,
+		Content:  "**⚠️ | testuser**, please complete your captcha to verify that you are human! (simulate)",
 		Mentions: []*discord.User{{ID: id}},
 	}
 	if !detectCaptcha(msg, normalizeZW(msg.Content), "testuser", uid, "testuser") {
