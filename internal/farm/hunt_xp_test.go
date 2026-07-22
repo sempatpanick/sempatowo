@@ -50,8 +50,8 @@ func TestHandleHuntGemsAccumulatesXP(t *testing.T) {
 			b := New("token", nil)
 			b.handleHuntGems(tc.content, "user")
 
-			if b.totalXP != tc.want {
-				t.Errorf("totalXP = %d, want %d", b.totalXP, tc.want)
+			if _, xp := b.stats.Totals(); xp != tc.want {
+				t.Errorf("totalXP = %d, want %d", xp, tc.want)
 			}
 		})
 	}

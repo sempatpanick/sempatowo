@@ -103,51 +103,22 @@ func (b *Bot) trySignalFarmFromMessage(msg *discord.Message, content, nick strin
 }
 
 func (b *Bot) markFarmAwaiting(name string) {
-	b.mu.Lock()
-	if b.farmAwaiting == nil {
-		b.farmAwaiting = make(map[string]struct{})
-	}
-	b.farmAwaiting[name] = struct{}{}
-	b.mu.Unlock()
+	b.sched.MarkAwaiting(name)
 
 	go func() {
 		defer util.Recover(b.logDanger, "farmResponseTimeout:"+name)
 		time.Sleep(farmResponseTimeout)
-		b.mu.Lock()
-		_, pending := b.farmAwaiting[name]
-		if pending {
-			delete(b.farmAwaiting, name)
-		}
-		can := pending && b.canSendLocked() && b.cmdSchedStop != nil
-		b.mu.Unlock()
-		if !can {
+		// Claiming is what makes this safe against the reply arriving at the
+		// same moment: exactly one of the two wins and reschedules.
+		if !b.sched.ClaimAwaiting(name) {
 			return
 		}
-		def := b.farmCmdByName(name)
-		if def != nil && def.enabled(b) {
-			b.rescheduleFarmCmd(name)
-		}
+		b.rescheduleFarmCmd(name)
 	}()
 }
 
 func (b *Bot) signalFarmResponse(name string) {
-	b.mu.Lock()
-	if b.farmAwaiting == nil {
-		b.mu.Unlock()
-		return
-	}
-	if _, ok := b.farmAwaiting[name]; !ok {
-		b.mu.Unlock()
-		return
-	}
-	delete(b.farmAwaiting, name)
-	can := b.canSendLocked() && b.cmdSchedStop != nil
-	b.mu.Unlock()
-	if !can {
-		return
-	}
-	def := b.farmCmdByName(name)
-	if def == nil || !def.enabled(b) {
+	if !b.sched.ClaimAwaiting(name) {
 		return
 	}
 	b.rescheduleFarmCmd(name)
@@ -155,18 +126,17 @@ func (b *Bot) signalFarmResponse(name string) {
 
 func (b *Bot) rescheduleFarmCmd(name string) {
 	def := b.farmCmdByName(name)
-	if def == nil {
+	if def == nil || !def.enabled(b) {
 		return
 	}
 	delay := def.delayMs(b)
 	if delay <= 0 {
 		return
 	}
-	b.mu.Lock()
-	if b.canSendLocked() && b.cmdSchedStop != nil && def.enabled(b) {
-		b.pushScheduledCmd(name, time.Now().Add(time.Duration(delay)*time.Millisecond))
+	if !b.canSend() || !b.sched.Running() {
+		return
 	}
-	b.mu.Unlock()
+	b.sched.Push(name, time.Now().Add(time.Duration(delay)*time.Millisecond))
 }
 
 func (b *Bot) markChecklistAwaiting() {

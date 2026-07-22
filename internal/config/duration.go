@@ -26,10 +26,25 @@ func (d Duration) Millis() int { return int(time.Duration(d) / time.Millisecond)
 // Seconds returns the duration in fractional seconds.
 func (d Duration) Seconds() float64 { return time.Duration(d).Seconds() }
 
-func (d Duration) String() string { return time.Duration(d).String() }
+// String renders the duration for the config file. Go's own formatting spells
+// five minutes "5m0s"; a whole number of minutes or hours is written without
+// the redundant tail, since the file is meant to be read and edited by hand.
+func (d Duration) String() string {
+	std := time.Duration(d)
+	switch {
+	case std == 0:
+		return "0s"
+	case std%time.Hour == 0:
+		return fmt.Sprintf("%dh", std/time.Hour)
+	case std%time.Minute == 0:
+		return fmt.Sprintf("%dm", std/time.Minute)
+	default:
+		return std.String()
+	}
+}
 
 func (d Duration) MarshalJSON() ([]byte, error) {
-	return json.Marshal(time.Duration(d).String())
+	return json.Marshal(d.String())
 }
 
 func (d *Duration) UnmarshalJSON(data []byte) error {

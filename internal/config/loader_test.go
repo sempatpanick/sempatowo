@@ -302,3 +302,54 @@ func TestReloadAppliesValidEditAndReportsOldValue(t *testing.T) {
 		t.Errorf("Get().Prefix = %q, want the reloaded value", l.Get().Prefix)
 	}
 }
+
+// Whole minutes and hours are written without Go's redundant tail, and every
+// form still parses back to the same value.
+func TestDurationStringRoundTrips(t *testing.T) {
+	tests := []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{500 * time.Millisecond, "500ms"},
+		{15 * time.Second, "15s"},
+		{5 * time.Minute, "5m"},
+		{305 * time.Second, "5m5s"},
+		{1000 * time.Second, "16m40s"},
+		{time.Hour, "1h"},
+		{90 * time.Minute, "90m"},
+	}
+
+	for _, tt := range tests {
+		got := Duration(tt.d).String()
+		if got != tt.want {
+			t.Errorf("Duration(%v).String() = %q, want %q", tt.d, got, tt.want)
+		}
+
+		var back Duration
+		if err := json.Unmarshal([]byte(`"`+got+`"`), &back); err != nil {
+			t.Errorf("%q does not parse back: %v", got, err)
+			continue
+		}
+		if back.Std() != tt.d {
+			t.Errorf("%q round-tripped to %v, want %v", got, back.Std(), tt.d)
+		}
+	}
+}
+
+// Every duration in the shipped defaults has to survive a save/load cycle
+// unchanged, or a config file would drift each time it is rewritten.
+func TestDefaultsSurviveMarshalRoundTrip(t *testing.T) {
+	data, err := json.Marshal(Defaults())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var back Settings
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back != Defaults() {
+		t.Error("defaults changed across a marshal round trip")
+	}
+}

@@ -355,14 +355,9 @@ func (b *Bot) logOwOResponse(msg *discord.Message, content, nick string) {
 		return
 	}
 	if strings.HasPrefix(summary, "Battle →") && msg != nil && msg.ID != 0 {
-		key := msg.ID.String() + "|" + summary
-		b.mu.Lock()
-		if b.lastBattleLog == key {
-			b.mu.Unlock()
+		if b.stats.SeenBattleLog(msg.ID.String() + "|" + summary) {
 			return
 		}
-		b.lastBattleLog = key
-		b.mu.Unlock()
 	}
 	b.logInfo(summary)
 }

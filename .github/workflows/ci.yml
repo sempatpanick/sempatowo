@@ -20,7 +20,7 @@ jobs:
       # formatting checks so its diff against upstream stays readable.
       - name: gofmt
         run: |
-          unformatted=$(gofmt -l ./internal ./main.go)
+          unformatted=$(gofmt -l ./internal ./cmd)
           if [ -n "$unformatted" ]; then
             echo "These files need gofmt:"
             echo "$unformatted"

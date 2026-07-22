@@ -48,14 +48,18 @@ func TestSignalFarmResponseReschedules(t *testing.T) {
 	b := New("token", nil)
 	b.active = true
 	b.ready = true
-	b.farmAwaiting = map[string]struct{}{"hunt": {}}
-	b.cmdSchedStop = make(chan struct{})
+	// Begin clears the awaiting set, so the marker goes on after it.
+	b.sched.Begin()
+	b.sched.MarkAwaiting("hunt")
+	if !b.sched.IsAwaiting("hunt") {
+		t.Fatal("test setup failed: hunt is not marked awaiting")
+	}
 	// cfg is left unset (nil) — farmCmdByName's enabled check falls back to
 	// config.Defaults() via settings().
 
 	// Without config, enabled checks may fail — test pending clear only.
 	b.signalFarmResponse("hunt")
-	if _, ok := b.farmAwaiting["hunt"]; ok {
+	if b.sched.IsAwaiting("hunt") {
 		t.Fatal("expected hunt pending cleared")
 	}
 }
