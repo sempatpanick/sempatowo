@@ -18,13 +18,15 @@ var (
 	unicodeEmojiNameRe   = regexp.MustCompile(`:([a-z0-9_]+):`)
 	huntFoundRe          = regexp.MustCompile(`(?i)you found:\s*(.+)`)
 	battleResultRe       = regexp.MustCompile(`(?i)you (won|lost) in (\d+) turns!`)
-	battleXpRe           = regexp.MustCompile(`([+-]\d+)\s*xp`)
-	battleStreakRe       = regexp.MustCompile(`(?i)streak:\s*(\d+)`)
-	battleStreakEndedRe  = regexp.MustCompile(`(?i)streak ended at (\d+)`)
-	prayLuckRe           = regexp.MustCompile(`(?i)(?:you have\s+)?(\d+)\s+luck point`)
-	prayFlavorRe         = regexp.MustCompile(`(?i)prays\.\.\.\s*(.+?)(?:\s*\||$)`)
-	rankRe               = regexp.MustCompile(`Rank (#[\d,]+)`)
-	inventoryItemRe      = regexp.MustCompile("`(\\d+)`<a?:(\\w+):\\d+>([⁰¹²³⁴⁵⁶⁷⁸⁹]+)")
+	// [\d,]+ because OwO comma-groups anything from 1,000 up; \d+ silently
+	// failed to match the whole pattern and dropped the xp from the summary.
+	battleXpRe          = regexp.MustCompile(`([+-][\d,]+)\s*xp`)
+	battleStreakRe      = regexp.MustCompile(`(?i)streak:\s*(\d+)`)
+	battleStreakEndedRe = regexp.MustCompile(`(?i)streak ended at (\d+)`)
+	prayLuckRe          = regexp.MustCompile(`(?i)(?:you have\s+)?(\d+)\s+luck point`)
+	prayFlavorRe        = regexp.MustCompile(`(?i)prays\.\.\.\s*(.+?)(?:\s*\||$)`)
+	rankRe              = regexp.MustCompile(`Rank (#[\d,]+)`)
+	inventoryItemRe     = regexp.MustCompile("`(\\d+)`<a?:(\\w+):\\d+>([⁰¹²³⁴⁵⁶⁷⁸⁹]+)")
 )
 
 // shouldSkipOwOLog returns true for gamble/cash messages handled by other loggers.
@@ -110,7 +112,7 @@ func summarizeOwOMessage(content, nick string) string {
 			}
 		}
 		if m := xpRe.FindStringSubmatch(content); len(m) > 1 {
-			summary += " (+" + m[1] + " pet xp)"
+			summary += " (" + formatSignedXP(m[1]) + " pet xp)"
 		}
 		return summary
 	}
@@ -234,11 +236,25 @@ func summarizeBattle(text string) string {
 	summary := "Battle → " + outcome + " in " + turns + " turns"
 	streak := battleStreakInfo(text)
 	if xp := battleXpRe.FindStringSubmatch(text); len(xp) > 1 {
-		summary += " (" + xp[1] + " xp" + streak + ")"
+		summary += " (" + formatSignedXP(xp[1]) + " xp" + streak + ")"
 	} else if streak != "" {
 		summary += " (" + strings.TrimPrefix(streak, ", ") + ")"
 	}
 	return summary
+}
+
+// formatSignedXP normalizes a captured xp amount — "+2,800", "+2800", "-15" —
+// to one comma-grouped form with an explicit sign, so the log reads the same
+// whether or not OwO grouped the number.
+func formatSignedXP(raw string) string {
+	n, ok := util.ParseAmount(raw)
+	if !ok {
+		return raw
+	}
+	if n >= 0 {
+		return "+" + util.FormatInt(n)
+	}
+	return util.FormatInt(n)
 }
 
 func isPrayMessage(text string) bool {
