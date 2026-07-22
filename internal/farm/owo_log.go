@@ -148,7 +148,7 @@ func summarizeInventory(content, nick string) string {
 	if len(items) == 0 {
 		return "Inventory → empty"
 	}
-	const maxShown = 50
+	const maxShown = 10
 	parts := make([]string, 0, len(items))
 	for _, it := range items {
 		parts = append(parts, it.name+"×"+strconv.Itoa(it.count))
