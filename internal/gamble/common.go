@@ -5,7 +5,6 @@ import (
 	"math/rand"
 	"regexp"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -63,8 +62,7 @@ func parseCommaAmount(s string) (int, bool) {
 	if len(m) < 2 {
 		return 0, false
 	}
-	n, err := strconv.Atoi(strings.ReplaceAll(m[1], ",", ""))
-	return n, err == nil
+	return util.ParseAmount(m[1])
 }
 
 // parseRegexAmount returns the first non-empty capture group from re in content.

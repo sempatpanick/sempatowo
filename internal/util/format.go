@@ -26,6 +26,16 @@ func SuperscriptToNumber(s string) int {
 	return n
 }
 
+// ParseAmount parses an integer that may carry thousands separators and a
+// leading sign, e.g. "+2,800" → 2800.
+//
+// OwO writes any value of 1,000 or more with commas, so a plain strconv.Atoi
+// silently fails on exactly the large numbers that matter most.
+func ParseAmount(s string) (int, bool) {
+	n, err := strconv.Atoi(strings.ReplaceAll(strings.TrimSpace(s), ",", ""))
+	return n, err == nil
+}
+
 // FormatInt formats an integer with thousands separators (e.g. 114308 → "114,308").
 func FormatInt(n int) string {
 	sign := ""

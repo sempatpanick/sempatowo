@@ -101,6 +101,30 @@ func TestSummarizeBattle(t *testing.T) {
 			footer: "You lost in 16 turns!  |  +63 xp  |  Streak ended at 4",
 			want:   "Battle → lost in 16 turns (+63 xp, streak ended at 4)",
 		},
+		// OwO comma-groups from 1,000 up. These used to drop the xp entirely.
+		{
+			footer: "You won in 3 turns!  |  +2,800 xp  |  Streak: 21",
+			want:   "Battle → won in 3 turns (+2,800 xp, streak 21)",
+		},
+		{
+			footer: "You won in 4 turns!  |  +12,345 xp  |  Streak: 30",
+			want:   "Battle → won in 4 turns (+12,345 xp, streak 30)",
+		},
+		// Just under the grouping boundary.
+		{
+			footer: "You won in 1 turns!  |  +999 xp  |  Streak: 2",
+			want:   "Battle → won in 1 turns (+999 xp, streak 2)",
+		},
+		// Ungrouped four-digit input still renders grouped, so the log is
+		// consistent regardless of how OwO formatted it.
+		{
+			footer: "You won in 2 turns!  |  +1500 xp  |  Streak: 5",
+			want:   "Battle → won in 2 turns (+1,500 xp, streak 5)",
+		},
+		{
+			footer: "You lost in 9 turns!  |  -1,200 xp  |  Streak ended at 7",
+			want:   "Battle → lost in 9 turns (-1,200 xp, streak ended at 7)",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.want, func(t *testing.T) {

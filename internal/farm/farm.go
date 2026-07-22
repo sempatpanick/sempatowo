@@ -726,7 +726,10 @@ func (b *Bot) handleChecklist(msg *discord.Message, nick string) {
 
 var huntGemRe = regexp.MustCompile(`(?:(.+)\*\*( spent|, hunt))`)
 var inventoryRe = regexp.MustCompile("`(\\d+|2--)`<a?:\\w+:\\d+>([⁰¹²³⁴⁵⁶⁷⁸⁹]+)")
-var xpRe = regexp.MustCompile(`gained \*\*(\d+)xp\*\*`)
+
+// [\d,]+ because OwO comma-groups anything from 1,000 up; \d+ dropped every
+// four-digit gain, silently under-counting totalXP.
+var xpRe = regexp.MustCompile(`gained \*\*([\d,]+)xp\*\*`)
 var questRe = regexp.MustCompile(`(?s)\*\*\d+\. (.+?)\*\*.*?Progress: \[(\d+)/(\d+)\]`)
 
 func (b *Bot) handleHuntGems(content, nick string) {
@@ -760,8 +763,10 @@ func (b *Bot) handleHuntGems(content, nick string) {
 	}
 
 	for _, m := range xpRe.FindAllStringSubmatch(content, -1) {
-		xp, _ := strconv.Atoi(m[1])
-		b.totalXP += xp
+		// Atoi alone would fail on "2,800" and silently add zero.
+		if xp, ok := util.ParseAmount(m[1]); ok {
+			b.totalXP += xp
+		}
 	}
 }
 
