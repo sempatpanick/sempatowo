@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 var cashRe = regexp.MustCompile(`(\d{1,3}(?:,\d{3})*)\s+cowoncy`)
@@ -90,6 +92,7 @@ func (m *Manager) RequestCash() {
 		return
 	}
 	go func() {
+		defer util.Recover(m.bot.Log, "gambleStart")
 		sleepRange(4.5, 34.4)
 		if !m.bot.CanSend() {
 			return

@@ -50,7 +50,8 @@ func TestSignalFarmResponseReschedules(t *testing.T) {
 	b.ready = true
 	b.farmAwaiting = map[string]struct{}{"hunt": {}}
 	b.cmdSchedStop = make(chan struct{})
-	b.cfg = nil // farmCmdByName enabled check uses settings
+	// cfg is left unset (nil) — farmCmdByName's enabled check falls back to
+	// config.Defaults() via settings().
 
 	// Without config, enabled checks may fail — test pending clear only.
 	b.signalFarmResponse("hunt")

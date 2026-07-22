@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 const (
@@ -42,6 +44,7 @@ func GetURL(token string) string {
 // GetURLAsync fetches the captcha URL without blocking other work.
 func GetURLAsync(token string, callback func(string)) {
 	go func() {
+		defer util.Recover(nil, "captchaGetURL")
 		callback(GetURL(token))
 	}()
 }

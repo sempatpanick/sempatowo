@@ -10,7 +10,10 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/semptpanick/sempatowo/internal/farm"
+	"github.com/semptpanick/sempatowo/internal/util"
 )
+
+func logPanic(msg string) { log.Print(msg) }
 
 func main() {
 	simulateCaptcha := flag.Bool("simulate-captcha", false, "connect and inject a fake OwO captcha to test pause, browser, and notifications")
@@ -32,20 +35,22 @@ func main() {
 		if len(tokens) > 1 {
 			log.Println("simulate-captcha uses only the first token")
 		}
-		go func(token string) {
-			b := farm.New(token)
+		util.Go(logPanic, "simulate-captcha", func() {
+			b := farm.New(tokens[0])
 			if err := b.RunSimulateCaptcha(); err != nil {
 				log.Printf("Bot error: %v", err)
 			}
-		}(tokens[0])
+		})
 	} else {
+		// Each account gets its own recovered goroutine so a panic in one
+		// does not take down the others sharing this process.
 		for _, token := range tokens {
-			go func(token string) {
+			util.Go(logPanic, "bot", func() {
 				b := farm.New(token)
 				if err := b.Run(); err != nil {
 					log.Printf("Bot error: %v", err)
 				}
-			}(token)
+			})
 		}
 	}
 

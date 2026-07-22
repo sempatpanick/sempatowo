@@ -5,6 +5,7 @@ import (
 	"time"
 
 	discord "github.com/hytams/discordgo-self"
+	"github.com/semptpanick/sempatowo/internal/util"
 )
 
 // RunSimulateCaptcha connects to Discord, injects a fake OwO captcha after ready,
@@ -18,6 +19,7 @@ func (b *Bot) scheduleSimulateCaptcha() {
 	b.log.Info("Simulate captcha mode — auto farm will not start")
 	b.log.Info("Injecting fake OwO captcha in 2s...")
 	time.AfterFunc(2*time.Second, func() {
+		defer util.Recover(b.logDanger, "simulateCaptcha")
 		b.injectSimulateCaptcha()
 	})
 }
@@ -46,7 +48,7 @@ func (b *Bot) injectSimulateCaptcha() {
 
 func (b *Bot) buildSimulateCaptchaMessage() *discord.Message {
 	uid := b.userID()
-	if uid == "" || b.cfg == nil {
+	if uid == "" || b.cfg.Load() == nil {
 		return nil
 	}
 	s := b.settings()
