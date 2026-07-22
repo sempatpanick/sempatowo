@@ -108,9 +108,122 @@ func New(token string) *Bot {
 	}
 }
 
-// Run connects to Discord and blocks until disconnect.
+// Connection supervision. The gateway library resumes on its own, but only for
+// a bounded number of attempts (gateway.MaxReconnectAttempts), and a single
+// failed re-dial ends the read loop for good — after that nothing is running
+// and the process would otherwise sit idle looking healthy. Run rebuilds the
+// client when that happens.
+const (
+	// connectionPoll is how often the supervisor samples gateway state.
+	connectionPoll = 15 * time.Second
+	// connectionGrace must exceed the library's own backoff ladder
+	// (1+2+4+8+16s) so we never fight its resume with a full reconnect.
+	connectionGrace = 90 * time.Second
+
+	reconnectBackoffMin = 5 * time.Second
+	reconnectBackoffMax = 5 * time.Minute
+)
+
+// Run connects to Discord and supervises the session, rebuilding it with
+// backoff whenever the gateway drops for good. It returns only when the
+// connection cannot be established at all.
 func (b *Bot) Run() error {
-	return b.run()
+	backoff := reconnectBackoffMin
+	for attempt := 1; ; attempt++ {
+		err := b.run()
+		if err != nil {
+			b.logDanger("Connection failed: " + err.Error())
+			if attempt == 1 {
+				// Never connected — likely a bad token or no network, and
+				// retrying forever would just hide that.
+				return err
+			}
+		} else {
+			// The session was live before it dropped, so start the ladder over
+			// rather than inheriting the delay from an earlier outage.
+			b.logDanger("Gateway connection lost")
+			backoff = reconnectBackoffMin
+		}
+
+		b.teardownSession()
+
+		b.logInfo(fmt.Sprintf("Reconnecting in %s", backoff))
+		time.Sleep(backoff)
+		if backoff < reconnectBackoffMax {
+			backoff *= 2
+			if backoff > reconnectBackoffMax {
+				backoff = reconnectBackoffMax
+			}
+		}
+	}
+}
+
+// teardownSession stops every background worker and clears per-session state so
+// a fresh client starts clean. Mirrors the pause performed by handleCaptcha.
+func (b *Bot) teardownSession() {
+	b.mu.Lock()
+	b.ready = false
+	b.captchaSolving = false
+	b.queue = nil
+	b.stopQueueLocked()
+	b.stopFarmTimersLocked()
+	b.stopFarmSchedulerLocked()
+	b.clearCaptchaTimersLocked()
+	b.active = true
+	b.mu.Unlock()
+
+	b.stopHuntbot()
+	b.stopGamble()
+	b.stopDaily()
+	b.stopAutoQuest()
+
+	if c := b.discordClient(); c != nil {
+		_ = c.Close()
+	}
+}
+
+// superviseConnection blocks until the gateway has been down long enough that
+// the library has clearly given up resuming.
+func (b *Bot) superviseConnection(client *discord.Client) {
+	if client == nil || client.Gateway == nil {
+		return
+	}
+	superviseLoop(client.Gateway.IsConnected, connectionPoll, connectionGrace,
+		func() { b.logDanger("Gateway disconnected — waiting for resume") },
+		func() { b.logInfo("Gateway reconnected") })
+}
+
+// superviseLoop returns once connected has reported false continuously for at
+// least grace. Split from superviseConnection so the timing logic is testable
+// without a live gateway.
+func superviseLoop(connected func() bool, poll, grace time.Duration, onDown, onUp func()) {
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+
+	var downSince time.Time
+	for range ticker.C {
+		if connected() {
+			if !downSince.IsZero() {
+				downSince = time.Time{}
+				if onUp != nil {
+					onUp()
+				}
+			}
+			continue
+		}
+
+		if downSince.IsZero() {
+			downSince = time.Now()
+			if onDown != nil {
+				onDown()
+			}
+			continue
+		}
+
+		if time.Since(downSince) >= grace {
+			return
+		}
+	}
 }
 
 func (b *Bot) run() error {
@@ -147,7 +260,8 @@ func (b *Bot) run() error {
 		return err
 	}
 
-	select {} // run until killed
+	b.superviseConnection(client)
+	return nil
 }
 
 func (b *Bot) onReady() {
@@ -157,6 +271,15 @@ func (b *Bot) onReady() {
 		return
 	}
 	b.log.SetID(user.Username)
+
+	// onReady fires again after every reconnect. NewLoader starts a file
+	// watcher goroutine that cannot be stopped, so reuse the existing loader
+	// rather than leaking one per reconnect — same account, same config file.
+	loader := b.cfg.Load()
+	if loader != nil {
+		b.onSessionReady()
+		return
+	}
 
 	loader, err := config.NewLoader("config", user.Username, func(s config.Settings) {
 		b.log.Info("Config reloaded")
@@ -175,13 +298,16 @@ func (b *Bot) onReady() {
 	s := loader.Get()
 	b.log.Info(fmt.Sprintf("Channels — hunt: %s, quest: %s", s.Channels.Hunt, s.Channels.Quest))
 
+	b.onSessionReady()
+}
+
+// onSessionReady starts automation for a freshly established session. Split out
+// of onReady so reconnects can reuse it without rebuilding the config loader.
+func (b *Bot) onSessionReady() {
 	if b.simulateCaptcha {
 		b.scheduleSimulateCaptcha()
 		return
 	}
-
-	b.enqueue(s.Channels.Hunt, "sempatowo v1.0.0")
-	// b.startChecklistLoop()
 
 	time.AfterFunc(8*time.Second, func() {
 		defer util.Recover(b.logDanger, "startupDelay")
@@ -516,7 +642,6 @@ func (b *Bot) handleVerificationSuccess(content string) {
 	}
 
 	b.logInfo("OwO verification success — resuming auto farm (" + content + ")")
-	// b.startChecklistLoop()
 	b.startAutomation()
 }
 
@@ -802,6 +927,8 @@ func (b *Bot) startAutomation() {
 	b.startGambleIfNeeded()
 	b.startDailyIfNeeded()
 	b.startAutoQuestIfNeeded()
+	// No-op unless status.checklist is enabled.
+	b.scheduleNextChecklist()
 }
 
 func (b *Bot) startFarmSchedulerIfNeeded() {

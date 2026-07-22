@@ -75,7 +75,12 @@ func (l *Loader) watch(onChange func(Settings)) {
 	}
 	defer watcher.Close()
 
-	_ = watcher.Add(l.path)
+	// Without this the loop below runs forever receiving nothing, and edits to
+	// the config file are silently ignored with no hint as to why.
+	if err := watcher.Add(l.path); err != nil {
+		fmt.Printf("config watch error: cannot watch %s: %v (hot-reload disabled)\n", l.path, err)
+		return
+	}
 
 	for {
 		select {
@@ -115,13 +120,18 @@ func loadFromFile(path string) (Settings, error) {
 	}
 
 	merged := Defaults()
-	mergeJSON(&merged, raw)
+	if err := mergeJSON(&merged, raw); err != nil {
+		return Settings{}, err
+	}
 
 	normalizeDelays(&merged)
 	return merged, nil
 }
 
-func mergeJSON(dst *Settings, raw map[string]json.RawMessage) {
+// mergeJSON overlays the user's raw JSON onto dst, filling any key the user
+// omitted from Defaults. It reports an error rather than leaving dst partially
+// populated, which would silently hand back a half-valid config.
+func mergeJSON(dst *Settings, raw map[string]json.RawMessage) error {
 	defaults := Defaults()
 	defBytes, _ := json.Marshal(defaults)
 	var defMap map[string]json.RawMessage
@@ -148,8 +158,11 @@ func mergeJSON(dst *Settings, raw map[string]json.RawMessage) {
 		}
 	}
 
-	final, _ := json.Marshal(raw)
-	_ = json.Unmarshal(final, dst)
+	final, err := json.Marshal(raw)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(final, dst)
 }
 
 func isObject(raw json.RawMessage) bool {
