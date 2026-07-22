@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/semptpanick/sempatowo/internal/config"
 	"github.com/semptpanick/sempatowo/internal/util"
 )
 
@@ -49,22 +49,14 @@ func GetURLAsync(token string, callback func(string)) {
 	}()
 }
 
-// Solve tries automatic hCaptcha solving when CAPTCHA_API_KEY is set.
-func Solve(token string) Result {
-	apiKey := strings.TrimSpace(os.Getenv("CAPTCHA_API_KEY"))
+// Solve tries automatic hCaptcha solving. The solver settings are read once at
+// startup and passed in, so a bad service name fails before the bot connects
+// rather than at the moment a captcha appears.
+func Solve(token string, env config.CaptchaEnv) Result {
 	manualURL := GetURL(token)
 
-	if apiKey == "" {
+	if !env.AutoSolveEnabled() {
 		return Result{Success: false, Message: "CAPTCHA_API_KEY not set — solve manually in browser", URL: manualURL}
-	}
-
-	timeoutSec := 90
-	if v := strings.TrimSpace(os.Getenv("CAPTCHA_SOLVE_TIMEOUT")); v != "" {
-		if n, err := fmt.Sscanf(v, "%d", &timeoutSec); n == 1 && err == nil && timeoutSec > 0 {
-			// ok
-		} else {
-			timeoutSec = 90
-		}
 	}
 
 	cookie, err := getOwoAuthCookie(token)
@@ -72,14 +64,9 @@ func Solve(token string) Result {
 		return Result{Success: false, Message: "Failed to authenticate with OwO (OAuth cookie)", URL: manualURL}
 	}
 
-	service := strings.TrimSpace(os.Getenv("CAPTCHA_SERVICE"))
-	if service == "" {
-		service = "capsolver"
-	}
-
-	hcToken, err := solveHcaptcha(apiKey, service, time.Duration(timeoutSec)*time.Second)
+	hcToken, err := solveHcaptcha(env.APIKey, env.Service, env.SolveTimeout)
 	if err != nil || hcToken == "" {
-		return Result{Success: false, Message: fmt.Sprintf("hCaptcha solve failed (%s)", service), URL: manualURL}
+		return Result{Success: false, Message: fmt.Sprintf("hCaptcha solve failed (%s)", env.Service), URL: manualURL}
 	}
 
 	if !verifyOwoCaptcha(cookie, hcToken) {

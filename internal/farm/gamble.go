@@ -61,8 +61,8 @@ func (b *Bot) newGambleContext() *gambleCtx {
 	return &gambleCtx{bot: b}
 }
 
-func (c *gambleCtx) HuntChannelID() string { return c.bot.settings().Channels.Hunt }
-func (c *gambleCtx) OwoBotID() string      { return c.bot.settings().OwoID }
+func (c *gambleCtx) HuntChannelID() string { return c.bot.settings().FarmChannel() }
+func (c *gambleCtx) OwoBotID() string      { return c.bot.settings().OwoBotID }
 func (c *gambleCtx) Nickname() string {
 	client := c.bot.discordClient()
 	user := c.bot.discordUser()
@@ -80,8 +80,8 @@ func (c *gambleCtx) Nickname() string {
 }
 func (c *gambleCtx) Username() string                  { return c.bot.username() }
 func (c *gambleCtx) UserID() string                    { return c.bot.userID() }
-func (c *gambleCtx) CashCheck() bool                   { return c.bot.settings().CashCheck }
-func (c *gambleCtx) Gamble() config.Gamble             { return c.bot.settings().Gamble }
+func (c *gambleCtx) CashCheck() bool                   { return c.bot.settings().TrackBalance }
+func (c *gambleCtx) Gamble() config.Gamble             { return c.bot.settings().Features.Gamble }
 func (c *gambleCtx) RandomPrefix(cmds []string) string { return c.bot.randomPrefix(cmds) }
 func (c *gambleCtx) SendMessage(channelID, text string) error {
 	c.bot.enqueue(channelID, text)

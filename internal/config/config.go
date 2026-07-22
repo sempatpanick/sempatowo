@@ -1,75 +1,116 @@
 package config
 
+// SchemaVersion is the current config file format. A file without this key is
+// treated as the pre-1.0 shape and migrated by legacy.go on load.
+const SchemaVersion = 1
+
 // Settings holds all runtime options for one Discord account.
+//
+// The layout is feature-first: everything needed to run one feature lives in
+// one block. The old schema split each feature across status/interval/channels/
+// target plus a top-level gate, so enabling a feature meant editing up to five
+// places and forgetting one silently did nothing.
 type Settings struct {
-	Typing             bool           `json:"typing"`
-	Prefix             string         `json:"prefix"`
-	Status             StatusSettings `json:"status"`
-	Interval           Interval       `json:"interval"`
-	Channels           Channels       `json:"channels"`
-	Target             Targets        `json:"target"`
-	OwoID              string         `json:"owoId"`
-	ChecklistCompleted bool           `json:"checklist_completed"`
-	CashCheck          bool           `json:"cashCheck"`
-	AutoDaily          bool           `json:"autoDaily"`
-	AllowAutoQuest     bool           `json:"allowAutoQuest"`
-	OCRApi             string         `json:"ocrApi"`
-	Huntbot            Huntbot        `json:"huntbot"`
-	Gamble             Gamble         `json:"gamble"`
-	AutoQuest          AutoQuest      `json:"autoQuest"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Label         string `json:"label,omitempty"`
+
+	Typing   bool   `json:"typing"`
+	Prefix   string `json:"prefix"`
+	OwoBotID string `json:"owoBotId"`
+
+	// DefaultChannel is where commands go unless a feature overrides it.
+	DefaultChannel string `json:"defaultChannel"`
+
+	// SendMessageInterval is the minimum spacing between outgoing messages.
+	SendMessageInterval Duration `json:"sendMessageInterval"`
+
+	// StopWhenChecklistDone halts farming once the checklist is fully ticked.
+	StopWhenChecklistDone bool `json:"stopWhenChecklistDone"`
+
+	// TrackBalance keeps a running cash total, which the gamble safety limits
+	// and the daily reward handler both depend on.
+	TrackBalance bool `json:"trackBalance"`
+
+	Features Features `json:"features"`
 }
 
-type StatusSettings struct {
-	Hunt          bool `json:"hunt"`
-	Battle        bool `json:"battle"`
-	Zoo           bool `json:"zoo"`
-	Pray          bool `json:"pray"`
-	Curse         bool `json:"curse"`
-	Lootbox       bool `json:"lootbox"`
-	LootboxFabled bool `json:"lootbox_fabled"`
-	Crate         bool `json:"crate"`
-	Cookie        bool `json:"cookie"`
-	Gems          bool `json:"gems"`
-	Inventory     bool `json:"inventory"`
-	Quest         bool `json:"quest"`
-	// Checklist defaults to false: the loop was disabled in code for a while,
-	// so opting in explicitly keeps existing configs behaving as they did.
-	Checklist bool `json:"checklist"`
+// Features groups one block per automated behaviour.
+type Features struct {
+	Hunt      ScheduledFeature `json:"hunt"`
+	Battle    ScheduledFeature `json:"battle"`
+	Pray      TargetedFeature  `json:"pray"`
+	Curse     TargetedFeature  `json:"curse"`
+	Zoo       ScheduledFeature `json:"zoo"`
+	Inventory ScheduledFeature `json:"inventory"`
+	Checklist ScheduledFeature `json:"checklist"`
+	Cookie    CookieFeature    `json:"cookie"`
+	Lootbox   LootboxFeature   `json:"lootbox"`
+	Crate     Toggle           `json:"crate"`
+	Gems      Toggle           `json:"gems"`
+	Daily     Toggle           `json:"daily"`
+	Quest     QuestFeature     `json:"quest"`
+	Huntbot   Huntbot          `json:"huntbot"`
+	Gamble    Gamble           `json:"gamble"`
 }
 
-type ActionDelay struct {
-	MinDelay    int `json:"minDelay"`
-	MaxDelay    int `json:"maxDelay"`
-	SlowestTime int `json:"slowestTime,omitempty"`
-	FastestTime int `json:"fastestTime,omitempty"`
+// Toggle is a feature with nothing to configure but on/off.
+type Toggle struct {
+	Enabled bool `json:"enabled"`
 }
 
-type Interval struct {
-	SendMessage int         `json:"send_message"`
-	Zoo         int         `json:"zoo"`
-	Pray        int         `json:"pray"`
-	Curse       int         `json:"curse"`
-	Hunt        ActionDelay `json:"hunt"`
-	Battle      ActionDelay `json:"battle"`
-	Inventory   int         `json:"inventory"`
-	Checklist   int         `json:"checklist"`
-	Quest       QuestDelay  `json:"quest"`
+// ScheduledFeature runs a command on a repeating randomised delay. A fixed
+// interval is expressed as min == max; jitter is available everywhere rather
+// than only on hunt and battle, since a perfectly periodic command is the
+// easiest kind of automation to spot.
+type ScheduledFeature struct {
+	Enabled bool `json:"enabled"`
+	// Channel overrides Settings.DefaultChannel when non-empty.
+	Channel string `json:"channel,omitempty"`
+	Delay   Range  `json:"delay"`
 }
 
-type QuestDelay struct {
-	Owo   int `json:"owo"`
-	Check int `json:"check"`
+// TargetedFeature is a scheduled command aimed at another user ("" = self).
+type TargetedFeature struct {
+	ScheduledFeature
+	Target string `json:"target"`
 }
 
-type Channels struct {
-	Hunt  string `json:"hunt"`
-	Quest string `json:"quest"`
+// CookieFeature is triggered by the checklist rather than on a timer.
+type CookieFeature struct {
+	Enabled bool   `json:"enabled"`
+	Target  string `json:"target"`
 }
 
-type Targets struct {
-	Pray   string `json:"pray"`
-	Curse  string `json:"curse"`
-	Cookie string `json:"cookie"`
+type LootboxFeature struct {
+	Enabled bool `json:"enabled"`
+	Fabled  bool `json:"fabled"`
+}
+
+type QuestFeature struct {
+	Enabled bool   `json:"enabled"`
+	Channel string `json:"channel,omitempty"`
+	// Delay is how often to re-check quest progress.
+	Delay Range `json:"delay"`
+	// OwoDelay spaces out the plain "owo" messages used to complete the
+	// say-owo quest.
+	OwoDelay Range     `json:"owoDelay"`
+	Auto     AutoQuest `json:"auto"`
+}
+
+type AutoQuest struct {
+	Enabled bool `json:"enabled"`
+	// AcknowledgeExperimental is the safety gate: auto-quest clicks buttons and
+	// posts in shared channels, so it stays off until explicitly acknowledged.
+	AcknowledgeExperimental       bool              `json:"acknowledgeExperimental"`
+	HelpChannel                   AutoQuestHelpChan `json:"helpChannel"`
+	EnableCommandsToCompleteQuest bool              `json:"enableCommandsToCompleteQuest"`
+	HelpOthers                    bool              `json:"helpOthers"`
+	CheckCooldown                 Range             `json:"checkCooldown"`
+}
+
+type AutoQuestHelpChan struct {
+	PostInHelpChannel bool   `json:"postInHelpChannel"`
+	ChannelID         string `json:"channelId"`
 }
 
 type Huntbot struct {
@@ -79,16 +120,12 @@ type Huntbot struct {
 }
 
 type HuntbotUpgrader struct {
-	Enabled   bool           `json:"enabled"`
-	Sleeptime jsonSleeptime  `json:"sleeptime"`
-	Traits    HuntbotTraits  `json:"traits"`
-	Weights   HuntbotWeights `json:"weights"`
-}
-
-// jsonSleeptime accepts either a number or [min, max] in JSON.
-type jsonSleeptime struct {
-	Single *float64
-	Range  *[2]float64
+	Enabled bool `json:"enabled"`
+	// Cooldown was "sleeptime" in the old schema, where it could be either a
+	// number or a [min,max] pair.
+	Cooldown Range          `json:"cooldown"`
+	Traits   HuntbotTraits  `json:"traits"`
+	Weights  HuntbotWeights `json:"weights"`
 }
 
 type HuntbotTraits struct {
@@ -123,10 +160,10 @@ type GambleGoalSystem struct {
 }
 
 type GambleGame struct {
-	Enabled          bool         `json:"enabled"`
-	StartValue       int          `json:"startValue"`
-	MultiplierOnLose float64      `json:"multiplierOnLose"`
-	Cooldown         jsonSecRange `json:"cooldown"`
+	Enabled          bool    `json:"enabled"`
+	StartValue       int     `json:"startValue"`
+	MultiplierOnLose float64 `json:"multiplierOnLose"`
+	Cooldown         Range   `json:"cooldown"`
 }
 
 type CoinflipSettings struct {
@@ -139,107 +176,119 @@ type CoinflipOptions struct {
 	Tails bool `json:"tails"`
 }
 
-type AutoQuest struct {
-	Enabled                       bool              `json:"enabled"`
-	HelpChannel                   AutoQuestHelpChan `json:"helpChannel"`
-	EnableCommandsToCompleteQuest bool              `json:"enableCommandsToCompleteQuest"`
-	HelpOthers                    bool              `json:"helpOthers"`
-	CheckCooldown                 jsonSecRange      `json:"checkCooldown"`
-}
-
-type AutoQuestHelpChan struct {
-	PostInHelpChannel bool   `json:"postInHelpChannel"`
-	ChannelID         string `json:"channelId"`
-}
-
-// jsonSecRange accepts a [min, max] cooldown in seconds (owo-dusk style).
-type jsonSecRange struct {
-	Range *[2]float64
-}
-
 // CooldownSec returns min/max cooldown in seconds.
 func (g GambleGame) CooldownSec() (min, max float64) {
-	if g.Cooldown.Range == nil {
+	if g.Cooldown.IsZero() {
 		return 16, 18
 	}
-	return (*g.Cooldown.Range)[0], (*g.Cooldown.Range)[1]
+	return g.Cooldown.SecondsRange()
 }
 
-// Defaults returns the built-in config template (same as the TS project).
+// --- channel resolution ---
+
+func (s Settings) channelOr(override string) string {
+	if override != "" {
+		return override
+	}
+	return s.DefaultChannel
+}
+
+// FarmChannel is where the ordinary OwO commands go.
+func (s Settings) FarmChannel() string { return s.channelOr(s.Features.Hunt.Channel) }
+
+// QuestChannel is where quest checks go.
+func (s Settings) QuestChannel() string { return s.channelOr(s.Features.Quest.Channel) }
+
+// ChannelFor resolves a scheduled feature's channel against the default.
+func (s Settings) ChannelFor(f ScheduledFeature) string { return s.channelOr(f.Channel) }
+
+// AutoQuestActive reports whether auto-quest should run: both the feature and
+// its experimental acknowledgement have to be set.
+func (s Settings) AutoQuestActive() bool {
+	return s.Features.Quest.Auto.Enabled && s.Features.Quest.Auto.AcknowledgeExperimental
+}
+
+// AnyGambleEnabled reports whether at least one gamble game is on.
+func (s Settings) AnyGambleEnabled() bool {
+	g := s.Features.Gamble
+	return g.Coinflip.Enabled || g.Slots.Enabled || g.Blackjack.Enabled
+}
+
+// Defaults returns the built-in config template.
 func Defaults() Settings {
+	const defaultChannel = "1513744333579489310"
+
 	return Settings{
-		Typing: true,
-		Prefix: "w",
-		Status: StatusSettings{
-			Hunt: true, Battle: true, Zoo: false, Pray: true, Curse: false,
-			Lootbox: true, LootboxFabled: true, Crate: true, Cookie: false,
-			Gems: true, Inventory: true, Quest: false, Checklist: false,
-		},
-		Interval: Interval{
-			SendMessage: 5000,
-			Zoo:         300000,
-			Pray:        305000,
-			Curse:       305000,
-			Hunt:        ActionDelay{MinDelay: 50000, MaxDelay: 200000},
-			Battle:      ActionDelay{MinDelay: 50000, MaxDelay: 200000},
-			Inventory:   300000,
-			Checklist:   1000000,
-			Quest:       QuestDelay{Owo: 32000, Check: 60000},
-		},
-		Channels: Channels{
-			Hunt:  "1513744333579489310",
-			Quest: "1513744333579489310",
-		},
-		Target: Targets{
-			Cookie: "469369739131617291",
-		},
-		OwoID:              "408785106942164992",
-		ChecklistCompleted: false,
-		CashCheck:          true,
-		AutoDaily:          true,
-		AllowAutoQuest:     false,
-		OCRApi:             "helloworld",
-		AutoQuest: AutoQuest{
-			Enabled: false,
-			HelpChannel: AutoQuestHelpChan{
-				PostInHelpChannel: false,
+		SchemaVersion:         SchemaVersion,
+		Typing:                true,
+		Prefix:                "w",
+		OwoBotID:              "408785106942164992",
+		DefaultChannel:        defaultChannel,
+		SendMessageInterval:   secs(5),
+		StopWhenChecklistDone: false,
+		TrackBalance:          true,
+		Features: Features{
+			Hunt:      ScheduledFeature{Enabled: true, Delay: rangeMillis(50000, 200000)},
+			Battle:    ScheduledFeature{Enabled: true, Delay: rangeMillis(50000, 200000)},
+			Pray:      TargetedFeature{ScheduledFeature: ScheduledFeature{Enabled: true, Delay: rangeSecs(305, 305)}},
+			Curse:     TargetedFeature{ScheduledFeature: ScheduledFeature{Enabled: false, Delay: rangeSecs(305, 305)}},
+			Zoo:       ScheduledFeature{Enabled: false, Delay: rangeSecs(300, 300)},
+			Inventory: ScheduledFeature{Enabled: true, Delay: rangeSecs(300, 300)},
+			// Checklist defaults to false: the loop was disabled in code for a
+			// while, so opting in explicitly keeps existing configs behaving
+			// as they did.
+			Checklist: ScheduledFeature{Enabled: false, Delay: rangeSecs(1000, 1000)},
+			Cookie:    CookieFeature{Enabled: false, Target: "469369739131617291"},
+			Lootbox:   LootboxFeature{Enabled: true, Fabled: true},
+			Crate:     Toggle{Enabled: true},
+			Gems:      Toggle{Enabled: true},
+			Daily:     Toggle{Enabled: true},
+			Quest: QuestFeature{
+				Enabled:  false,
+				Delay:    rangeSecs(60, 60),
+				OwoDelay: rangeSecs(32, 32),
+				Auto: AutoQuest{
+					Enabled:                       false,
+					AcknowledgeExperimental:       false,
+					HelpChannel:                   AutoQuestHelpChan{PostInHelpChannel: false},
+					EnableCommandsToCompleteQuest: true,
+					HelpOthers:                    true,
+					CheckCooldown:                 rangeSecs(10, 30),
+				},
 			},
-			EnableCommandsToCompleteQuest: true,
-			HelpOthers:                    true,
-			CheckCooldown:                 jsonSecRange{Range: &[2]float64{10, 30}},
-		},
-		Gamble: Gamble{
-			AllottedAmount: 10000,
-			GoalSystem:     GambleGoalSystem{Enabled: true, Amount: 30000},
-			Coinflip: CoinflipSettings{
-				GambleGame: GambleGame{
+			Huntbot: Huntbot{
+				Enabled:     false,
+				CashToSpend: 10000,
+				Upgrader: HuntbotUpgrader{
+					Enabled:  true,
+					Cooldown: rangeSecs(10, 15),
+					Traits: HuntbotTraits{
+						Efficiency: true, Duration: true, Cost: true,
+						Gain: true, Exp: true, Radar: true,
+					},
+					Weights: HuntbotWeights{
+						Efficiency: 4, Duration: 2, Cost: 5,
+						Gain: 4, Exp: 3, Radar: 1,
+					},
+				},
+			},
+			Gamble: Gamble{
+				AllottedAmount: 10000,
+				GoalSystem:     GambleGoalSystem{Enabled: true, Amount: 30000},
+				Coinflip: CoinflipSettings{
+					GambleGame: GambleGame{
+						Enabled: false, StartValue: 200, MultiplierOnLose: 2,
+						Cooldown: rangeSecs(16, 18),
+					},
+					Options: CoinflipOptions{Heads: true, Tails: false},
+				},
+				Slots: GambleGame{
 					Enabled: false, StartValue: 200, MultiplierOnLose: 2,
-					Cooldown: jsonSecRange{Range: &[2]float64{16, 18}},
+					Cooldown: rangeSecs(16, 18),
 				},
-				Options: CoinflipOptions{Heads: true, Tails: false},
-			},
-			Slots: GambleGame{
-				Enabled: false, StartValue: 200, MultiplierOnLose: 2,
-				Cooldown: jsonSecRange{Range: &[2]float64{16, 18}},
-			},
-			Blackjack: GambleGame{
-				Enabled: false, StartValue: 200, MultiplierOnLose: 2,
-				Cooldown: jsonSecRange{Range: &[2]float64{16, 18}},
-			},
-		},
-		Huntbot: Huntbot{
-			Enabled:     false,
-			CashToSpend: 10000,
-			Upgrader: HuntbotUpgrader{
-				Enabled:   true,
-				Sleeptime: jsonSleeptime{Range: &[2]float64{10, 15}},
-				Traits: HuntbotTraits{
-					Efficiency: true, Duration: true, Cost: true,
-					Gain: true, Exp: true, Radar: true,
-				},
-				Weights: HuntbotWeights{
-					Efficiency: 4, Duration: 2, Cost: 5,
-					Gain: 4, Exp: 3, Radar: 1,
+				Blackjack: GambleGame{
+					Enabled: false, StartValue: 200, MultiplierOnLose: 2,
+					Cooldown: rangeSecs(16, 18),
 				},
 			},
 		},

@@ -15,7 +15,7 @@ func TestSleepUntilReportsElapsed(t *testing.T) {
 	if elapsed := time.Since(start); elapsed < 200*time.Millisecond {
 		t.Fatalf("returned after %v, want at least 200ms", elapsed)
 	}
-	if c.bot.sleep != nil {
+	if c.bot.sleeper.active != nil {
 		t.Fatal("sleep handle should be cleared once the wait finishes")
 	}
 }

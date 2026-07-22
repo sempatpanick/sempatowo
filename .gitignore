@@ -3,14 +3,10 @@
 .env.local
 .env.*.local
 
-# Per-account config (created on first run)
-config/*.json
-
-# Runtime data
-data/
-
-# Browser profiles for captcha solving
-browser-profiles/
+# All writable runtime state: per-account config, daily stats, and the Chrome
+# profiles used for captcha solving. One directory to ignore, back up, or
+# delete. Override the location with DATA_DIR.
+var/
 
 # Go build output
 /sempatowo

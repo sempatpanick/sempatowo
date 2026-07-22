@@ -1,76 +1,161 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
 )
 
-// Loader loads and hot-reloads per-user JSON config files.
+// Logger is the subset of the project logger this package needs. Keeping it an
+// interface means config stays a leaf package with no internal imports.
+type Logger interface {
+	Info(msg string)
+	Danger(msg string)
+}
+
+// ChangeFunc is called after a successful hot-reload, with the settings that
+// were replaced and the ones now in force. Passing both lets the caller restart
+// only the subsystems whose settings actually moved.
+type ChangeFunc func(old, new Settings)
+
+// Loader loads and hot-reloads one account's JSON config file.
 type Loader struct {
 	mu       sync.RWMutex
 	settings Settings
 	path     string
+	log      Logger
 }
 
-// NewLoader creates config/{username}.json, merges missing keys from defaults, and watches for changes.
-func NewLoader(configDir, username string, onChange func(Settings)) (*Loader, error) {
+// LoadResult reports what happened during the initial load, so the caller can
+// surface it without the loader deciding how to phrase things.
+type LoadResult struct {
+	// Created is true when the file did not exist and defaults were written.
+	Created bool
+	// Migrated is true when a pre-1.0 file was converted and rewritten.
+	Migrated bool
+	// BackupPath is where the pre-migration file was preserved.
+	BackupPath string
+	// Notes are migration remarks and unknown-key warnings.
+	Notes []string
+
+	// legacyRaw is the pre-migration file, kept so the loader can back it up.
+	// Inspect deliberately does not write it: checking a config must not
+	// change anything on disk.
+	legacyRaw []byte
+}
+
+// NewLoader opens (or creates) the config file for one account and starts
+// watching it. Files are keyed by Discord user ID rather than username: usernames
+// change, IDs do not, and the runtime data files in data/ are already keyed that
+// way. The human-readable name is stored inside the file as "label".
+func NewLoader(configDir, userID, label string, log Logger, onChange ChangeFunc) (*Loader, LoadResult, error) {
+	var res LoadResult
+
+	if userID == "" {
+		return nil, res, fmt.Errorf("config: empty user ID")
+	}
 	if err := os.MkdirAll(configDir, 0o755); err != nil {
-		return nil, err
+		return nil, res, err
 	}
 
-	path := filepath.Join(configDir, username+".json")
-	l := &Loader{path: path}
+	path := filepath.Join(configDir, userID+".json")
+	l := &Loader{path: path, log: log}
 
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		l.settings = Defaults()
-		if err := l.save(); err != nil {
-			return nil, err
+	if legacy := legacyPathFor(configDir, label); legacy != "" && !fileExists(path) {
+		if err := os.Rename(legacy, path); err != nil {
+			return nil, res, fmt.Errorf("config: moving %s to %s: %w", legacy, path, err)
 		}
+		res.Notes = append(res.Notes, "renamed "+filepath.Base(legacy)+" to "+filepath.Base(path)+" (config files are keyed by user ID now)")
+	}
+
+	if !fileExists(path) {
+		l.settings = Defaults()
+		l.settings.Label = label
+		if err := l.save(); err != nil {
+			return nil, res, err
+		}
+		res.Created = true
 	} else {
-		s, err := loadFromFile(path)
+		s, r, err := loadFromFile(path, label)
 		if err != nil {
-			return nil, err
+			return nil, res, err
 		}
 		l.settings = s
+		res.Migrated = r.Migrated
+		res.Notes = append(res.Notes, r.Notes...)
+
+		if r.Migrated {
+			res.BackupPath = path + ".v0.bak"
+			if err := os.WriteFile(res.BackupPath, r.legacyRaw, 0o644); err != nil {
+				return nil, res, fmt.Errorf("backing up legacy config: %w", err)
+			}
+			if err := l.save(); err != nil {
+				return nil, res, err
+			}
+			res.Notes = append(res.Notes,
+				fmt.Sprintf("migrated to schemaVersion %d; original kept at %s",
+					SchemaVersion, filepath.Base(res.BackupPath)))
+		}
 	}
 
-	if onChange != nil {
-		onChange(l.settings)
+	if err := l.settings.Validate(); err != nil {
+		return nil, res, fmt.Errorf("invalid config %s:\n%w", path, err)
 	}
 
 	go l.watch(onChange)
-	return l, nil
+	return l, res, nil
 }
 
+// Get returns the settings currently in force.
 func (l *Loader) Get() Settings {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	return l.settings
 }
 
-func (l *Loader) Set(s Settings) {
+// Path is the file this loader watches.
+func (l *Loader) Path() string { return l.path }
+
+func (l *Loader) set(s Settings) Settings {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	old := l.settings
 	l.settings = s
+	return old
 }
 
 func (l *Loader) save() error {
+	l.mu.RLock()
 	data, err := json.MarshalIndent(l.settings, "", "  ")
+	l.mu.RUnlock()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(l.path, data, 0o644)
+	return os.WriteFile(l.path, append(data, '\n'), 0o644)
 }
 
-func (l *Loader) watch(onChange func(Settings)) {
+func (l *Loader) info(msg string) {
+	if l.log != nil {
+		l.log.Info(msg)
+	}
+}
+
+func (l *Loader) danger(msg string) {
+	if l.log != nil {
+		l.log.Danger(msg)
+	}
+}
+
+func (l *Loader) watch(onChange ChangeFunc) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		fmt.Printf("config watch error: %v\n", err)
+		l.danger(fmt.Sprintf("config watch error: %v (hot-reload disabled)", err))
 		return
 	}
 	defer watcher.Close()
@@ -78,7 +163,7 @@ func (l *Loader) watch(onChange func(Settings)) {
 	// Without this the loop below runs forever receiving nothing, and edits to
 	// the config file are silently ignored with no hint as to why.
 	if err := watcher.Add(l.path); err != nil {
-		fmt.Printf("config watch error: cannot watch %s: %v (hot-reload disabled)\n", l.path, err)
+		l.danger(fmt.Sprintf("config watch error: cannot watch %s: %v (hot-reload disabled)", l.path, err))
 		return
 	}
 
@@ -88,148 +173,129 @@ func (l *Loader) watch(onChange func(Settings)) {
 			if !ok {
 				return
 			}
-			if event.Op&fsnotify.Write == fsnotify.Write {
-				s, err := loadFromFile(l.path)
-				if err != nil {
-					fmt.Printf("config reload error: %v\n", err)
-					continue
-				}
-				l.Set(s)
-				if onChange != nil {
-					onChange(s)
-				}
+			if event.Op&fsnotify.Write != fsnotify.Write {
+				continue
 			}
+			l.reload(onChange)
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return
 			}
-			fmt.Printf("config watcher: %v\n", err)
+			l.danger(fmt.Sprintf("config watcher: %v", err))
 		}
 	}
 }
 
-func loadFromFile(path string) (Settings, error) {
+// reload re-reads the file. A file that fails to parse or validate is rejected
+// and the previous settings stay in force — applying a half-broken config to a
+// running bot is worse than ignoring the edit, as long as we say so loudly.
+func (l *Loader) reload(onChange ChangeFunc) {
+	label := l.Get().Label
+
+	s, res, err := loadFromFile(l.path, label)
+	if err != nil {
+		l.danger("config reload rejected, keeping previous settings: " + err.Error())
+		return
+	}
+	if err := s.Validate(); err != nil {
+		l.danger("config reload rejected, keeping previous settings:\n" + err.Error())
+		return
+	}
+	for _, note := range res.Notes {
+		l.info("config: " + note)
+	}
+	for _, w := range s.Warnings() {
+		l.info("config warning: " + w)
+	}
+
+	old := l.set(s)
+	if onChange != nil {
+		onChange(old, s)
+	}
+}
+
+// Inspect reads and validates a config file without taking ownership of it: no
+// watcher is started and, unlike the loader, a legacy file is not rewritten.
+// It is what `sempatowo -check-config` runs.
+func Inspect(path string) (Settings, LoadResult, error) {
+	s, res, err := loadFromFile(path, "")
+	if err != nil {
+		return Settings{}, res, err
+	}
+	return s, res, s.Validate()
+}
+
+// loadFromFile reads path, migrating it from the pre-1.0 shape if needed.
+func loadFromFile(path, label string) (Settings, LoadResult, error) {
+	var res LoadResult
+
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Settings{}, err
+		return Settings{}, res, err
 	}
 
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return Settings{}, err
+	if isLegacy(data) {
+		s, notes, err := migrateLegacy(data)
+		if err != nil {
+			return Settings{}, res, err
+		}
+		if s.Label == "" {
+			s.Label = label
+		}
+		res.Migrated = true
+		res.legacyRaw = data
+		res.Notes = append(res.Notes, notes...)
+		return s, res, nil
 	}
 
-	merged := Defaults()
-	if err := mergeJSON(&merged, raw); err != nil {
-		return Settings{}, err
+	// Unmarshalling into an already-populated struct leaves fields the file
+	// omits untouched, at every depth. That is the whole defaults merge — the
+	// map-walking version this replaced was doing the same job twice.
+	s := Defaults()
+	if err := json.Unmarshal(data, &s); err != nil {
+		return Settings{}, res, fmt.Errorf("parsing %s: %w", filepath.Base(path), err)
 	}
+	if s.Label == "" {
+		s.Label = label
+	}
+	res.Notes = append(res.Notes, unknownKeyNotes(data)...)
 
-	normalizeDelays(&merged)
-	return merged, nil
+	return s, res, nil
 }
 
-// mergeJSON overlays the user's raw JSON onto dst, filling any key the user
-// omitted from Defaults. It reports an error rather than leaving dst partially
-// populated, which would silently hand back a half-valid config.
-func mergeJSON(dst *Settings, raw map[string]json.RawMessage) error {
-	defaults := Defaults()
-	defBytes, _ := json.Marshal(defaults)
-	var defMap map[string]json.RawMessage
-	_ = json.Unmarshal(defBytes, &defMap)
-
-	for key, defVal := range defMap {
-		userVal, ok := raw[key]
-		if !ok {
-			raw[key] = defVal
-			continue
-		}
-		// Shallow merge for nested objects (status, interval, channels, etc.)
-		if isObject(defVal) && isObject(userVal) {
-			var defObj, userObj map[string]json.RawMessage
-			_ = json.Unmarshal(defVal, &defObj)
-			_ = json.Unmarshal(userVal, &userObj)
-			for subKey, subDef := range defObj {
-				if _, exists := userObj[subKey]; !exists {
-					userObj[subKey] = subDef
-				}
-			}
-			merged, _ := json.Marshal(userObj)
-			raw[key] = merged
+// unknownKeyNotes reports keys the schema does not know about. A typo like
+// "enbaled" otherwise reads as "left at its default" and costs an evening.
+func unknownKeyNotes(data []byte) []string {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var probe Settings
+	if err := dec.Decode(&probe); err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "unknown field") {
+			return []string{msg + " — check for a typo; this setting is being ignored"}
 		}
 	}
-
-	final, err := json.Marshal(raw)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(final, dst)
-}
-
-func isObject(raw json.RawMessage) bool {
-	return len(raw) > 0 && raw[0] == '{'
-}
-
-func normalizeDelays(s *Settings) {
-	for _, pair := range []struct {
-		delay *ActionDelay
-		def   ActionDelay
-	}{
-		{&s.Interval.Hunt, Defaults().Interval.Hunt},
-		{&s.Interval.Battle, Defaults().Interval.Battle},
-	} {
-		d := pair.delay
-		if d.MinDelay == 0 && d.SlowestTime > 0 {
-			d.MinDelay = d.SlowestTime
-		}
-		if d.MaxDelay == 0 && d.FastestTime > 0 {
-			d.MaxDelay = d.FastestTime
-		}
-		if d.MinDelay == 0 {
-			d.MinDelay = pair.def.MinDelay
-		}
-		if d.MaxDelay == 0 {
-			d.MaxDelay = pair.def.MaxDelay
-		}
-	}
-}
-
-// UnmarshalJSON for jsonSleeptime: number or [min, max].
-func (j *jsonSleeptime) UnmarshalJSON(data []byte) error {
-	var single float64
-	if err := json.Unmarshal(data, &single); err == nil {
-		j.Single = &single
-		return nil
-	}
-	var arr [2]float64
-	if err := json.Unmarshal(data, &arr); err == nil {
-		j.Range = &arr
-		return nil
-	}
-	return fmt.Errorf("invalid sleeptime: %s", string(data))
-}
-
-func (j jsonSleeptime) MarshalJSON() ([]byte, error) {
-	if j.Range != nil {
-		return json.Marshal(j.Range)
-	}
-	if j.Single != nil {
-		return json.Marshal(*j.Single)
-	}
-	return json.Marshal(nil)
-}
-
-func (j *jsonSecRange) UnmarshalJSON(data []byte) error {
-	var arr [2]float64
-	if err := json.Unmarshal(data, &arr); err != nil {
-		return fmt.Errorf("invalid cooldown: %s", string(data))
-	}
-	j.Range = &arr
 	return nil
 }
 
-func (j jsonSecRange) MarshalJSON() ([]byte, error) {
-	if j.Range != nil {
-		return json.Marshal(j.Range)
+// legacyPathFor finds a pre-existing username-keyed config file to rename.
+func legacyPathFor(configDir, label string) string {
+	if label == "" {
+		return ""
 	}
-	return json.Marshal(nil)
+	p := filepath.Join(configDir, label+".json")
+	if fileExists(p) {
+		return p
+	}
+	return ""
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }

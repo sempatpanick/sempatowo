@@ -16,14 +16,15 @@ var (
 	waitingQueue  []queueEntry
 )
 
-// BrowserQueueEnabled is true when BROWSER_ISOLATED is disabled (shared system browser).
-func BrowserQueueEnabled() bool {
-	return !isIsolated()
+// BrowserQueueEnabled is true when browsers are not isolated per account, so
+// every account has to take turns at the one shared system browser.
+func BrowserQueueEnabled(isolated bool) bool {
+	return !isolated
 }
 
 // AcquireBrowserSlot waits until this account may open the captcha browser.
-func AcquireBrowserSlot(accountID string) {
-	if !BrowserQueueEnabled() {
+func AcquireBrowserSlot(accountID string, isolated bool) {
+	if !BrowserQueueEnabled(isolated) {
 		return
 	}
 
@@ -43,8 +44,8 @@ func AcquireBrowserSlot(accountID string) {
 }
 
 // ReleaseBrowserSlot frees the browser for the next waiting account.
-func ReleaseBrowserSlot(accountID string) {
-	if !BrowserQueueEnabled() {
+func ReleaseBrowserSlot(accountID string, isolated bool) {
+	if !BrowserQueueEnabled(isolated) {
 		return
 	}
 

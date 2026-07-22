@@ -43,7 +43,9 @@ type BotContext interface {
 	OwoBotID() string
 	Nickname() string
 	AutoQuest() config.AutoQuest
-	AllowAutoQuest() bool
+	// AutoQuestActive folds the feature toggle together with the experimental
+	// acknowledgement, so callers cannot check one and forget the other.
+	AutoQuestActive() bool
 	OCRApiKey() string
 	CanEnableQuestCmds() bool
 

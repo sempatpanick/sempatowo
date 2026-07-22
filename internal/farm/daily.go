@@ -14,10 +14,10 @@ func (b *Bot) newDailyContext() *dailyCtx {
 }
 
 func (c *dailyCtx) UserID() string                    { return c.bot.userID() }
-func (c *dailyCtx) HuntChannelID() string             { return c.bot.settings().Channels.Hunt }
-func (c *dailyCtx) OwoBotID() string                  { return c.bot.settings().OwoID }
-func (c *dailyCtx) AutoDaily() bool                   { return c.bot.settings().AutoDaily }
-func (c *dailyCtx) CashCheck() bool                   { return c.bot.settings().CashCheck }
+func (c *dailyCtx) HuntChannelID() string             { return c.bot.settings().FarmChannel() }
+func (c *dailyCtx) OwoBotID() string                  { return c.bot.settings().OwoBotID }
+func (c *dailyCtx) AutoDaily() bool                   { return c.bot.settings().Features.Daily.Enabled }
+func (c *dailyCtx) CashCheck() bool                   { return c.bot.settings().TrackBalance }
 func (c *dailyCtx) RandomPrefix(cmds []string) string { return c.bot.randomPrefix(cmds) }
 func (c *dailyCtx) SendMessage(channelID, text string) error {
 	c.bot.enqueue(channelID, text)
@@ -41,13 +41,13 @@ func (c *dailyCtx) Nickname() string {
 	return c.bot.username()
 }
 func (c *dailyCtx) OnDailyReward(amount int) {
-	if c.bot.gamble != nil && c.bot.settings().CashCheck {
+	if c.bot.gamble != nil && c.bot.settings().TrackBalance {
 		c.bot.gamble.UpdateBalance(amount, true)
 	}
 }
 
 func (b *Bot) startDailyIfNeeded() {
-	if !b.settings().AutoDaily {
+	if !b.settings().Features.Daily.Enabled {
 		b.stopDaily()
 		return
 	}
@@ -56,7 +56,7 @@ func (b *Bot) startDailyIfNeeded() {
 		return
 	}
 	if b.daily == nil {
-		store := daily.NewStore("data", uid)
+		store := daily.NewStore(b.env.Dirs.Data, uid)
 		b.daily = daily.NewManager(b.newDailyContext(), store)
 	}
 	b.daily.Start()

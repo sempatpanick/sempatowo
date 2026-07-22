@@ -52,7 +52,7 @@ func (b *Bot) buildSimulateCaptchaMessage() *discord.Message {
 		return nil
 	}
 	s := b.settings()
-	owoID, err := discord.ParseSnowflake(s.OwoID)
+	owoID, err := discord.ParseSnowflake(s.OwoBotID)
 	if err != nil {
 		return nil
 	}

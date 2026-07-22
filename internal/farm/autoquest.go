@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"math/rand"
 	"strconv"
-	"strings"
 	"time"
 
 	discord "github.com/hytams/discordgo-self"
@@ -24,35 +23,30 @@ func (b *Bot) newAutoQuestContext() *autoQuestCtx {
 func (c *autoQuestCtx) UserID() string        { return c.bot.userID() }
 func (c *autoQuestCtx) Username() string      { return c.bot.username() }
 func (c *autoQuestCtx) DisplayName() string   { return c.bot.username() }
-func (c *autoQuestCtx) HuntChannelID() string { return c.bot.settings().Channels.Hunt }
+func (c *autoQuestCtx) HuntChannelID() string { return c.bot.settings().FarmChannel() }
 func (c *autoQuestCtx) QuestHelpChannelID() string {
-	hc := c.bot.settings().AutoQuest.HelpChannel
+	hc := c.bot.settings().Features.Quest.Auto.HelpChannel
 	if hc.ChannelID != "" {
 		return hc.ChannelID
 	}
-	return c.bot.settings().Channels.Quest
+	return c.bot.settings().QuestChannel()
 }
-func (c *autoQuestCtx) OwoBotID() string { return c.bot.settings().OwoID }
+func (c *autoQuestCtx) OwoBotID() string { return c.bot.settings().OwoBotID }
 func (c *autoQuestCtx) AutoQuest() config.AutoQuest {
-	return c.bot.settings().AutoQuest
+	return c.bot.settings().Features.Quest.Auto
 }
-func (c *autoQuestCtx) AllowAutoQuest() bool { return c.bot.settings().AllowAutoQuest }
-func (c *autoQuestCtx) OCRApiKey() string {
-	if k := strings.TrimSpace(c.bot.settings().OCRApi); k != "" {
-		return k
-	}
-	return "helloworld"
-}
+func (c *autoQuestCtx) AutoQuestActive() bool { return c.bot.settings().AutoQuestActive() }
+func (c *autoQuestCtx) OCRApiKey() string     { return c.bot.env.OCRAPIKey }
 func (c *autoQuestCtx) CanEnableQuestCmds() bool {
-	return c.bot.settings().AutoQuest.EnableCommandsToCompleteQuest
+	return c.bot.settings().Features.Quest.Auto.EnableCommandsToCompleteQuest
 }
-func (c *autoQuestCtx) IsHuntEnabled() bool   { return c.bot.settings().Status.Hunt }
-func (c *autoQuestCtx) IsBattleEnabled() bool { return c.bot.settings().Status.Battle }
-func (c *autoQuestCtx) IsCookieEnabled() bool { return c.bot.settings().Status.Cookie }
-func (c *autoQuestCtx) IsPrayEnabled() bool   { return c.bot.settings().Status.Pray }
-func (c *autoQuestCtx) IsCurseEnabled() bool  { return c.bot.settings().Status.Curse }
+func (c *autoQuestCtx) IsHuntEnabled() bool   { return c.bot.settings().Features.Hunt.Enabled }
+func (c *autoQuestCtx) IsBattleEnabled() bool { return c.bot.settings().Features.Battle.Enabled }
+func (c *autoQuestCtx) IsCookieEnabled() bool { return c.bot.settings().Features.Cookie.Enabled }
+func (c *autoQuestCtx) IsPrayEnabled() bool   { return c.bot.settings().Features.Pray.Enabled }
+func (c *autoQuestCtx) IsCurseEnabled() bool  { return c.bot.settings().Features.Curse.Enabled }
 func (c *autoQuestCtx) IsGambleEnabled() bool {
-	g := c.bot.settings().Gamble
+	g := c.bot.settings().Features.Gamble
 	return g.Coinflip.Enabled || g.Slots.Enabled || g.Blackjack.Enabled
 }
 func (c *autoQuestCtx) Nickname() string {
@@ -72,7 +66,7 @@ func (c *autoQuestCtx) Nickname() string {
 }
 func (c *autoQuestCtx) GuildID() string {
 	client := c.bot.discordClient()
-	chID := c.bot.settings().Channels.Hunt
+	chID := c.bot.settings().FarmChannel()
 	if client == nil || client.State == nil || chID == "" {
 		return ""
 	}
@@ -125,7 +119,7 @@ func (c *autoQuestCtx) ClickButton(channelID, messageID, customID, applicationID
 	return client.ClickButton(ch, msg, customID, app)
 }
 func (c *autoQuestCtx) GambleEnqueue(game string, amount int) {
-	ch := c.bot.settings().Channels.Hunt
+	ch := c.bot.settings().FarmChannel()
 	var text, qGame string
 	switch game {
 	case "slots":
@@ -140,12 +134,12 @@ func (c *autoQuestCtx) GambleEnqueue(game string, amount int) {
 
 func (b *Bot) startAutoQuestIfNeeded() {
 	s := b.settings()
-	if !s.AutoQuest.Enabled {
+	if !s.Features.Quest.Auto.Enabled {
 		b.stopAutoQuest()
 		return
 	}
-	if !s.AllowAutoQuest {
-		b.logInfo("autoQuest disabled — set allowAutoQuest: true in config to enable (experimental)")
+	if !s.Features.Quest.Auto.AcknowledgeExperimental {
+		b.logInfo("auto-quest disabled — set features.quest.auto.acknowledgeExperimental: true to enable (experimental)")
 		b.stopAutoQuest()
 		return
 	}

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -28,17 +27,13 @@ const captchaDeadline = 10 * time.Minute
 
 const gambleResultWait = 8 * time.Second
 
-type queuedMsg struct {
-	channel    string
-	text       string
-	waitGamble string // "coinflip" or "slots" — pause queue until result
-}
-
 // Bot automates OwO farming for one Discord account.
 type Bot struct {
 	token  string
 	client *discord.Client
 	log    *util.Logger
+	// env is the process environment, read and validated once at startup.
+	env *config.Env
 
 	// cfg is installed by onReady on the gateway goroutine while message
 	// handlers, timers, and the queue goroutine read it concurrently, so the
@@ -55,40 +50,27 @@ type Bot struct {
 	gamble         *gamble.Manager
 	daily          *daily.Manager
 	autoQuest      *quest.Manager
-	sleepMu        sync.Mutex
-	sleep          *sleepHandle
 
-	queue        []queuedMsg
-	queueStop    chan struct{}
-	queueRunning bool
+	// sender owns the outgoing message queue and its own lock.
+	sender *sender
+	// sleeper owns the huntbot upgrader's cancellable wait and its own lock.
+	sleeper sleeper
 
-	gambleWaitMu   sync.Mutex
-	gambleWaitCh   chan struct{}
-	gambleWaitGame string
-
-	cmdHeap      cmdHeap
-	cmdSeq       uint64
-	cmdSchedStop chan struct{}
-	cmdWake      chan struct{}
-	farmAwaiting map[string]struct{}
+	// sched owns the farm command heap and its own lock.
+	sched farmSchedState
 
 	checklistAwaiting bool
 
-	timerCancel   map[string]func()
-	inventory     map[string]int
-	checklist     checklistState
-	totalXP       int
-	totalHunts    int
-	lastBattleLog string
-	questOwo      *questProgress
+	timerCancel map[string]func()
+	questOwo    *questProgress
 
-	captchaTimers []*time.Timer
+	// stats guards everything learned from OwO's replies with its own lock.
+	stats *farmStats
+
+	// captchaTimers owns the countdown warnings and its own lock.
+	captchaTimers captchaTimers
 
 	simulateCaptcha bool
-}
-
-type checklistState struct {
-	daily, vote, cookie, quest, lootbox, crate bool
 }
 
 type questProgress struct {
@@ -98,14 +80,25 @@ type questProgress struct {
 }
 
 // New creates a bot instance (does not connect yet).
-func New(token string) *Bot {
-	return &Bot{
+func New(token string, env *config.Env) *Bot {
+	if env == nil {
+		env = &config.Env{}
+	}
+	b := &Bot{
 		token:       token,
+		env:         env,
 		log:         util.NewLogger(""),
 		active:      true,
 		timerCancel: make(map[string]func()),
-		inventory:   make(map[string]int),
+		stats:       newFarmStats(),
 	}
+	b.sender = newSender(
+		b.canSend,
+		func() time.Duration { return b.settings().SendMessageInterval.Std() },
+		func(channel, text string) { b.send(channel, text, false) },
+		func(name string, fn func()) { util.Go(b.logDanger, name, fn) },
+	)
+	return b
 }
 
 // Connection supervision. The gateway library resumes on its own, but only for
@@ -164,13 +157,17 @@ func (b *Bot) teardownSession() {
 	b.mu.Lock()
 	b.ready = false
 	b.captchaSolving = false
-	b.queue = nil
-	b.stopQueueLocked()
 	b.stopFarmTimersLocked()
-	b.stopFarmSchedulerLocked()
 	b.clearCaptchaTimersLocked()
 	b.active = true
 	b.mu.Unlock()
+
+	// The sender and the scheduler each own a lock. Both are stopped outside
+	// b.mu: b.mu may be held while taking theirs, so the reverse must never
+	// happen.
+	b.sched.Stop()
+	b.sender.Clear()
+	b.sender.Stop()
 
 	b.stopHuntbot()
 	b.stopGamble()
@@ -281,24 +278,71 @@ func (b *Bot) onReady() {
 		return
 	}
 
-	loader, err := config.NewLoader("config", user.Username, func(s config.Settings) {
-		b.log.Info("Config reloaded")
-		b.restartFarmScheduler()
-		b.restartHuntbot()
-		b.restartGamble()
-		b.restartDaily()
-		b.restartAutoQuest()
-	})
+	loader, res, err := config.NewLoader(b.env.Dirs.Config, user.ID.String(), user.Username, b.log, b.onConfigChange)
 	if err != nil {
 		b.log.Danger("Config error: " + err.Error())
 		return
 	}
 	b.cfg.Store(loader)
 
+	if res.Created {
+		b.log.Info("Created " + loader.Path() + " from defaults")
+	}
+	for _, note := range res.Notes {
+		b.log.Info("config: " + note)
+	}
+
 	s := loader.Get()
-	b.log.Info(fmt.Sprintf("Channels — hunt: %s, quest: %s", s.Channels.Hunt, s.Channels.Quest))
+	for _, w := range s.Warnings() {
+		b.log.Info("config warning: " + w)
+	}
+	b.log.Info(fmt.Sprintf("Channels — farm: %s, quest: %s", s.FarmChannel(), s.QuestChannel()))
 
 	b.onSessionReady()
+}
+
+// onConfigChange restarts only the subsystems whose settings actually moved.
+// The loader hands over both versions precisely so this can be selective: a
+// blanket restart tore down the farm scheduler and every timer on any edit,
+// which reset in-flight delays and lost the gamble martingale state for an
+// unrelated one-character change.
+func (b *Bot) onConfigChange(old, new config.Settings) {
+	b.log.Info("Config reloaded")
+
+	// Anything routed through the message queue depends on these.
+	global := old.Prefix != new.Prefix ||
+		old.DefaultChannel != new.DefaultChannel ||
+		old.OwoBotID != new.OwoBotID ||
+		old.SendMessageInterval != new.SendMessageInterval
+
+	if global || farmSchedulingChanged(old, new) {
+		b.restartFarmScheduler()
+	}
+	if global || old.Features.Huntbot != new.Features.Huntbot {
+		b.restartHuntbot()
+	}
+	if global || old.Features.Gamble != new.Features.Gamble || old.TrackBalance != new.TrackBalance {
+		b.restartGamble()
+	}
+	if global || old.Features.Daily != new.Features.Daily || old.TrackBalance != new.TrackBalance {
+		b.restartDaily()
+	}
+	if global || old.Features.Quest != new.Features.Quest {
+		b.restartAutoQuest()
+	}
+}
+
+// farmSchedulingChanged reports whether any timer-driven command moved.
+func farmSchedulingChanged(old, new config.Settings) bool {
+	o, n := old.Features, new.Features
+	return o.Hunt != n.Hunt ||
+		o.Battle != n.Battle ||
+		o.Pray != n.Pray ||
+		o.Curse != n.Curse ||
+		o.Zoo != n.Zoo ||
+		o.Inventory != n.Inventory ||
+		o.Checklist != n.Checklist ||
+		o.Quest != n.Quest
 }
 
 // onSessionReady starts automation for a freshly established session. Split out
@@ -340,7 +384,7 @@ func (b *Bot) onMessage(msg *discord.Message) {
 		return
 	}
 	s := b.settings()
-	if msg.Author == nil || msg.Author.ID.String() != s.OwoID {
+	if msg.Author == nil || msg.Author.ID.String() != s.OwoBotID {
 		return
 	}
 
@@ -358,7 +402,7 @@ func (b *Bot) onMessage(msg *discord.Message) {
 	}
 
 	nick := b.nickname(msg)
-	if msg.ChannelID.String() == s.Channels.Hunt && !b.captchaSolving {
+	if msg.ChannelID.String() == s.FarmChannel() && !b.captchaSolving {
 		b.handleGambleMessage(msg)
 	}
 
@@ -388,11 +432,11 @@ func (b *Bot) onMessageUpdate(msg *discord.Message) {
 	}
 	s := b.settings()
 	ch := msg.ChannelID.String()
-	if ch != s.Channels.Hunt && msg.GuildID != 0 {
+	if ch != s.FarmChannel() && msg.GuildID != 0 {
 		return
 	}
 	// MESSAGE_UPDATE often omits author; OwO edits in the hunt channel are still ours.
-	if msg.Author != nil && msg.Author.ID.String() != s.OwoID {
+	if msg.Author != nil && msg.Author.ID.String() != s.OwoBotID {
 		return
 	}
 
@@ -408,7 +452,7 @@ func (b *Bot) onMessageUpdate(msg *discord.Message) {
 	gm := b.toGambleMessage(msg)
 	gm.Content = content
 	if gm.AuthorID == "" {
-		gm.AuthorID = s.OwoID
+		gm.AuthorID = s.OwoBotID
 	}
 	b.gamble.HandleMessageUpdate(gm)
 
@@ -531,10 +575,13 @@ func (b *Bot) handleCaptcha() {
 	b.captchaSolving = true
 	b.active = false
 	b.ready = false
-	b.queue = nil
-	b.stopQueueLocked()
 	b.stopFarmTimersLocked()
 	b.mu.Unlock()
+
+	b.sched.Stop()
+	b.sender.Clear()
+	b.sender.Stop()
+
 	b.stopHuntbot()
 	b.stopGamble()
 	b.stopDaily()
@@ -554,18 +601,18 @@ func (b *Bot) runCaptchaFlow() {
 	}
 
 	url := captcha.GetURL(b.token)
-	notify.CaptchaUrgent(profile, "Solve captcha now! Auto-solver also running in background.", url)
+	notify.CaptchaUrgent(profile, "Solve captcha now! Auto-solver also running in background.", url, b.env.Notifications)
 	b.scheduleCaptchaWarnings()
-	captcha.OpenBrowserAsync(url, profile, stillNeeded)
+	captcha.OpenBrowserAsync(url, profile, b.env.Browser, stillNeeded)
 
-	if strings.TrimSpace(getEnv("CAPTCHA_API_KEY")) == "" {
+	if !b.env.Captcha.AutoSolveEnabled() {
 		b.logDanger("No CAPTCHA_API_KEY — solve manually in the browser tab that just opened")
 		return
 	}
 
 	b.logInfo("Auto-solver running in background (browser already opened as fallback)...")
 	util.Go(b.logDanger, "captchaSolve", func() {
-		result := captcha.Solve(b.token)
+		result := captcha.Solve(b.token, b.env.Captcha)
 		if !stillNeeded() {
 			return
 		}
@@ -604,7 +651,7 @@ func (b *Bot) scheduleCaptchaWarnings() {
 			url := captcha.GetURL(b.token)
 			msg := fmt.Sprintf("%d minute(s) left to solve captcha or you may be banned", minLeft)
 			b.logDanger(msg)
-			notify.CaptchaUrgent(profile, msg, url)
+			notify.CaptchaUrgent(profile, msg, url, b.env.Notifications)
 			// stillNeeded := func() bool {
 			// 	b.mu.Lock()
 			// 	defer b.mu.Unlock()
@@ -612,18 +659,14 @@ func (b *Bot) scheduleCaptchaWarnings() {
 			// }
 			// captcha.OpenBrowserAsync(url, profile, stillNeeded)
 		})
-		b.mu.Lock()
-		b.captchaTimers = append(b.captchaTimers, t)
-		b.mu.Unlock()
+		b.captchaTimers.Add(t)
 	}
 	t := time.AfterFunc(captchaDeadline, func() {
 		defer util.Recover(b.logDanger, "captchaDeadline")
-		captcha.ReleaseBrowserSlot(profile)
+		captcha.ReleaseBrowserSlot(profile, b.env.Browser.Isolated)
 		b.logDanger("Captcha deadline reached — account may be banned. Solve manually if the page is still open.")
 	})
-	b.mu.Lock()
-	b.captchaTimers = append(b.captchaTimers, t)
-	b.mu.Unlock()
+	b.captchaTimers.Add(t)
 }
 
 func (b *Bot) handleVerificationSuccess(content string) {
@@ -638,7 +681,7 @@ func (b *Bot) handleVerificationSuccess(content string) {
 	b.mu.Unlock()
 
 	if wasSolving {
-		captcha.ReleaseBrowserSlot(b.profileLabel())
+		captcha.ReleaseBrowserSlot(b.profileLabel(), b.env.Browser.Isolated)
 	}
 
 	b.logInfo("OwO verification success — resuming auto farm (" + content + ")")
@@ -650,15 +693,14 @@ func (b *Bot) clearCaptchaTimers() {
 	wasSolving := b.clearCaptchaTimersLocked()
 	b.mu.Unlock()
 	if wasSolving {
-		captcha.ReleaseBrowserSlot(b.profileLabel())
+		captcha.ReleaseBrowserSlot(b.profileLabel(), b.env.Browser.Isolated)
 	}
 }
 
+// clearCaptchaTimersLocked requires b.mu, and reports whether a captcha was
+// actually outstanding — only then does the browser slot need releasing.
 func (b *Bot) clearCaptchaTimersLocked() bool {
-	for _, t := range b.captchaTimers {
-		t.Stop()
-	}
-	b.captchaTimers = nil
+	b.captchaTimers.Clear()
 	wasSolving := b.captchaSolving
 	b.captchaSolving = false
 	return wasSolving
@@ -676,29 +718,30 @@ func (b *Bot) handleChecklist(msg *discord.Message, nick string) {
 	s := b.settings()
 
 	b.log.Info("Checking checklist")
-	b.checklist.daily = !strings.Contains(desc, "⬛ 🎁")
-
-	if strings.Contains(desc, "⬛ 🍪") && s.Status.Cookie {
-		target := s.Target.Cookie
-		if target == "" {
-			target = s.OwoID
-		}
-		b.enqueue(s.Channels.Hunt, b.randomPrefix([]string{"cookie"})+" <@"+target+">")
-		b.checklist.cookie = true
+	cl := checklistState{
+		daily:   !strings.Contains(desc, "⬛ 🎁"),
+		vote:    !strings.Contains(desc, "⬛ 📝"),
+		quest:   !strings.Contains(desc, "⬛ 📜"),
+		lootbox: !strings.Contains(desc, "⬛ 💎"),
+		crate:   !strings.Contains(desc, "⬛ ⚔"),
 	}
 
-	b.checklist.vote = !strings.Contains(desc, "⬛ 📝")
-	b.checklist.quest = !strings.Contains(desc, "⬛ 📜")
-	b.checklist.lootbox = !strings.Contains(desc, "⬛ 💎")
-	b.checklist.crate = !strings.Contains(desc, "⬛ ⚔")
+	if strings.Contains(desc, "⬛ 🍪") && s.Features.Cookie.Enabled {
+		target := s.Features.Cookie.Target
+		if target == "" {
+			target = s.OwoBotID
+		}
+		b.enqueue(s.FarmChannel(), b.randomPrefix([]string{"cookie"})+" <@"+target+">")
+		cl.cookie = true
+	}
+	b.stats.SetChecklist(cl)
 
-	cl := b.checklist
 	b.log.Info(fmt.Sprintf("Checklist: daily=%v cookie=%v quest=%v lootbox=%v crate=%v",
 		cl.daily, cl.cookie, cl.quest, cl.lootbox, cl.crate))
 
-	if cl.daily && cl.cookie && cl.quest && cl.lootbox && cl.crate {
+	if cl.allDone() {
 		b.log.Info("All checklist completed")
-		if s.ChecklistCompleted {
+		if s.StopWhenChecklistDone {
 			b.stopFarmTimers()
 			b.mu.Lock()
 			if !b.ready && b.canSendLocked() {
@@ -737,7 +780,7 @@ func (b *Bot) handleHuntGems(content, nick string) {
 		return
 	}
 
-	b.totalHunts++
+	b.stats.AddHunt()
 	s := b.settings()
 	var missing []string
 	if !strings.Contains(content, "gem1") {
@@ -750,10 +793,11 @@ func (b *Bot) handleHuntGems(content, nick string) {
 		missing = append(missing, "luckgem")
 	}
 
-	if len(missing) > 0 && s.Status.Gems {
+	if len(missing) > 0 && s.Features.Gems.Enabled {
+		inv := b.stats.Inventory()
 		var gemIDs []string
 		for _, gemType := range missing {
-			if id := bestGem(b.inventory, items.Gems[gemType]); id != "" {
+			if id := bestGem(inv, items.Gems[gemType]); id != "" {
 				gemIDs = append(gemIDs, id)
 			}
 		}
@@ -765,7 +809,7 @@ func (b *Bot) handleHuntGems(content, nick string) {
 	for _, m := range xpRe.FindAllStringSubmatch(content, -1) {
 		// Atoi alone would fail on "2,800" and silently add zero.
 		if xp, ok := util.ParseAmount(m[1]); ok {
-			b.totalXP += xp
+			b.stats.AddXP(xp)
 		}
 	}
 }
@@ -800,26 +844,26 @@ func (b *Bot) handleInventory(content, nick string) {
 	for _, m := range inventoryRe.FindAllStringSubmatch(content, -1) {
 		inv[m[1]] = util.SuperscriptToNumber(m[2])
 	}
-	b.inventory = inv
+	b.stats.SetInventory(inv)
 	s := b.settings()
 
-	if inv[items.Crate] > 0 && s.Status.Crate {
-		b.enqueue(s.Channels.Hunt, b.randomPrefix([]string{"crate"})+" all")
+	if inv[items.Crate] > 0 && s.Features.Crate.Enabled {
+		b.enqueue(s.FarmChannel(), b.randomPrefix([]string{"crate"})+" all")
 	}
-	if inv[items.Lootbox] > 0 && s.Status.Lootbox {
-		b.enqueue(s.Channels.Hunt, b.randomPrefix([]string{"lootbox", "lb"})+" all")
+	if inv[items.Lootbox] > 0 && s.Features.Lootbox.Enabled {
+		b.enqueue(s.FarmChannel(), b.randomPrefix([]string{"lootbox", "lb"})+" all")
 	}
-	if inv[items.LootboxFabled] > 0 && s.Status.LootboxFabled {
-		b.enqueue(s.Channels.Hunt, b.randomPrefix([]string{"lootbox", "lb"})+" fabled all")
+	if inv[items.LootboxFabled] > 0 && s.Features.Lootbox.Fabled {
+		b.enqueue(s.FarmChannel(), b.randomPrefix([]string{"lootbox", "lb"})+" fabled all")
 	}
 }
 
 func (b *Bot) handleQuest(msg *discord.Message, nick string) {
 	s := b.settings()
-	if s.AutoQuest.Enabled && s.AllowAutoQuest {
+	if s.AutoQuestActive() {
 		return
 	}
-	if !s.Status.Quest {
+	if !s.Features.Quest.Enabled {
 		return
 	}
 	embed := firstEmbed(msg)
@@ -843,22 +887,22 @@ func (b *Bot) handleQuest(msg *discord.Message, nick string) {
 		total, _ := strconv.Atoi(m[3])
 		done, cancel := contextWithCancel()
 		b.questOwo = &questProgress{current: current, total: total, cancel: cancel}
-		intervalMs := s.Interval.Quest.Owo
-		channel := s.Channels.Hunt
+		delay := s.Features.Quest.OwoDelay
+		channel := s.FarmChannel()
 		b.mu.Unlock()
-		b.runOwoQuest(done, intervalMs, channel)
+		b.runOwoQuest(done, delay, channel)
 	}
 }
 
-func (b *Bot) runOwoQuest(done <-chan struct{}, intervalMs int, channel string) {
-	if intervalMs <= 0 {
-		intervalMs = 32000
+func (b *Bot) runOwoQuest(done <-chan struct{}, spacing config.Range, channel string) {
+	if spacing.IsZero() {
+		spacing = config.Defaults().Features.Quest.OwoDelay
 	}
 	go func() {
 		defer util.Recover(b.logDanger, "owoQuestLoop")
-		interval := time.Duration(intervalMs) * time.Millisecond
 		for {
-			delay := time.NewTimer(interval)
+			// Re-drawn each pass so the messages are not evenly spaced.
+			delay := time.NewTimer(spacing.Pick())
 			select {
 			case <-done:
 				delay.Stop()
@@ -911,14 +955,9 @@ func (b *Bot) runOwoQuest(done <-chan struct{}, intervalMs int, channel string) 
 }
 
 func (b *Bot) useGems(ids []string) {
-	for _, id := range ids {
-		b.inventory[id]--
-		if b.inventory[id] <= 0 {
-			delete(b.inventory, id)
-		}
-	}
+	b.stats.ConsumeItems(ids)
 	s := b.settings()
-	b.enqueue(s.Channels.Hunt, b.randomPrefix([]string{"use"})+" "+strings.Join(ids, " "))
+	b.enqueue(s.FarmChannel(), b.randomPrefix([]string{"use"})+" "+strings.Join(ids, " "))
 }
 
 // --- Farm scheduler (hunt, battle, pray, etc.) ---
@@ -945,33 +984,32 @@ func (b *Bot) startFarmSchedulerIfNeeded() {
 func (b *Bot) restartFarmScheduler() {
 	b.mu.Lock()
 	ready := b.ready && b.canSendLocked()
-	schedRunning := b.cmdSchedStop != nil
 	b.mu.Unlock()
 	if !ready {
 		return
 	}
 	if b.farmSchedulerNeeded(b.settings()) {
 		b.startFarmScheduler()
-	} else if schedRunning {
-		b.mu.Lock()
-		b.stopFarmSchedulerLocked()
-		b.mu.Unlock()
+	} else if b.sched.Running() {
+		b.sched.Stop()
 	}
 }
 
 func (b *Bot) farmSchedulerNeeded(s config.Settings) bool {
-	return s.Status.Hunt || s.Status.Battle || s.Status.Pray ||
-		s.Status.Curse || s.Status.Zoo || s.Status.Inventory || s.Status.Quest
+	return s.Features.Hunt.Enabled || s.Features.Battle.Enabled || s.Features.Pray.Enabled ||
+		s.Features.Curse.Enabled || s.Features.Zoo.Enabled || s.Features.Inventory.Enabled || s.Features.Quest.Enabled
 }
 
 func (b *Bot) stopFarmTimers() {
+	b.sched.Stop()
 	b.mu.Lock()
 	b.stopFarmTimersLocked()
 	b.mu.Unlock()
 }
 
+// stopFarmTimersLocked requires b.mu. It deliberately does not touch the
+// scheduler: that has its own lock and is stopped by the caller beforehand.
 func (b *Bot) stopFarmTimersLocked() {
-	b.stopFarmSchedulerLocked()
 	b.checklistAwaiting = false
 	if cancel, ok := b.timerCancel["checklist"]; ok {
 		cancel()
@@ -1017,33 +1055,29 @@ func (b *Bot) sendChecklist() {
 	}
 	b.log.Info("Sending checklist")
 	b.markChecklistAwaiting()
-	b.enqueue(b.settings().Channels.Hunt, b.randomPrefix([]string{"cl", "checklist"}))
+	b.enqueue(b.settings().FarmChannel(), b.randomPrefix([]string{"cl", "checklist"}))
 }
 
+// actionDelay returns the next delay in milliseconds for a scheduled command.
+// An inverted range is swapped rather than rejected: Validate already refuses
+// to load one, so reaching here means a default was somehow bypassed and
+// farming through it beats stopping.
 func (b *Bot) actionDelay(kind string) int {
 	s := b.settings()
-	def := config.Defaults()
-	var d config.ActionDelay
+	var r config.Range
 	switch kind {
 	case "hunt":
-		d = s.Interval.Hunt
-		if d.MinDelay == 0 {
-			d = def.Interval.Hunt
-		}
+		r = s.Features.Hunt.Delay
 	case "battle":
-		d = s.Interval.Battle
-		if d.MinDelay == 0 {
-			d = def.Interval.Battle
-		}
+		r = s.Features.Battle.Delay
 	}
-	min, max := d.MinDelay, d.MaxDelay
-	if min > max {
-		min, max = max, min
+	if r.IsZero() {
+		r = config.Defaults().Features.Hunt.Delay
 	}
-	if max <= min {
-		return min
+	if r.Max < r.Min {
+		r.Min, r.Max = r.Max, r.Min
 	}
-	return min + rand.Intn(max-min+1)
+	return int(r.Pick() / time.Millisecond)
 }
 
 func (b *Bot) randomPrefix(commands []string) string {
@@ -1060,134 +1094,13 @@ func (b *Bot) randomPrefix(commands []string) string {
 
 // --- Message queue ---
 
-func (b *Bot) enqueue(channel, text string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if !b.canSendLocked() || channel == "" || text == "" {
-		return
-	}
-	b.queue = append(b.queue, queuedMsg{channel: channel, text: text})
-	if b.queueStop == nil {
-		b.startQueueLocked()
-	}
-}
+func (b *Bot) enqueue(channel, text string) { b.sender.Send(channel, text) }
 
-func (b *Bot) enqueueGambleBet(channel, text, game string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if !b.canSendLocked() || channel == "" || text == "" || game == "" {
-		return
-	}
-	b.queue = append(b.queue, queuedMsg{channel: channel, text: text, waitGamble: game})
-	if b.queueStop == nil {
-		b.startQueueLocked()
-	}
-}
+func (b *Bot) enqueueGambleBet(channel, text, game string) { b.sender.SendBet(channel, text, game) }
 
-func (b *Bot) startQueueLocked() {
-	// Caller must hold b.mu.
-	if b.queueRunning {
-		return
-	}
-	if b.queueStop == nil {
-		b.queueStop = make(chan struct{})
-	}
-	b.queueRunning = true
-	stop := b.queueStop
-	util.Go(b.logDanger, "queue", func() { b.runQueue(stop) })
-}
+func (b *Bot) signalGambleResult(game string) { b.sender.SignalGambleResult(game) }
 
-func (b *Bot) runQueue(stop <-chan struct{}) {
-	interval := time.Duration(b.settings().Interval.SendMessage) * time.Millisecond
-	if interval <= 0 {
-		interval = 5 * time.Second
-	}
-
-	for {
-		b.mu.Lock()
-		if len(b.queue) == 0 || !b.canSendLocked() {
-			b.queueRunning = false
-			if len(b.queue) == 0 {
-				b.queueStop = nil
-			}
-			b.mu.Unlock()
-			return
-		}
-		msg := b.queue[0]
-		b.queue = b.queue[1:]
-		b.mu.Unlock()
-
-		if !b.canSend() {
-			return
-		}
-		b.send(msg.channel, msg.text, false)
-
-		if msg.waitGamble != "" {
-			b.waitGambleResult(msg.waitGamble, gambleResultWait, stop)
-		}
-
-		timer := time.NewTimer(interval)
-		select {
-		case <-stop:
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-	}
-}
-
-func (b *Bot) waitGambleResult(game string, timeout time.Duration, stop <-chan struct{}) {
-	ch := make(chan struct{})
-	b.gambleWaitMu.Lock()
-	b.gambleWaitCh = ch
-	b.gambleWaitGame = game
-	b.gambleWaitMu.Unlock()
-
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-ch:
-	case <-timer.C:
-	case <-stop:
-	}
-
-	b.gambleWaitMu.Lock()
-	if b.gambleWaitCh == ch {
-		b.gambleWaitCh = nil
-		b.gambleWaitGame = ""
-	}
-	b.gambleWaitMu.Unlock()
-}
-
-func (b *Bot) signalGambleResult(game string) {
-	b.gambleWaitMu.Lock()
-	if b.gambleWaitGame != game {
-		b.gambleWaitMu.Unlock()
-		return
-	}
-	ch := b.gambleWaitCh
-	b.gambleWaitCh = nil
-	b.gambleWaitGame = ""
-	b.gambleWaitMu.Unlock()
-	if ch != nil {
-		close(ch)
-	}
-}
-
-func (b *Bot) stopQueue() {
-	b.mu.Lock()
-	b.stopQueueLocked()
-	b.mu.Unlock()
-}
-
-func (b *Bot) stopQueueLocked() {
-	// Caller must hold b.mu.
-	if b.queueStop != nil {
-		close(b.queueStop)
-		b.queueStop = nil
-	}
-	b.queueRunning = false
-}
+func (b *Bot) stopQueue() { b.sender.Stop() }
 
 func (b *Bot) send(channelID, text string, force bool) {
 	b.mu.Lock()
@@ -1219,252 +1132,9 @@ func (b *Bot) send(channelID, text string, force bool) {
 	}
 }
 
-// --- Huntbot (separate from manual hunt; shares send queue via enqueue) ---
-
-func (b *Bot) startGambleIfNeeded() {
-	g := b.settings().Gamble
-	if !g.Coinflip.Enabled && !g.Slots.Enabled && !g.Blackjack.Enabled {
-		b.stopGamble()
-		return
-	}
-	if b.gamble == nil {
-		b.gamble = gamble.NewManager(b.newGambleContext())
-	}
-	b.gamble.Start()
-	if b.settings().CashCheck {
-		b.gamble.RequestCash()
-	}
-}
-
-func (b *Bot) stopGamble() {
-	if b.gamble != nil {
-		b.gamble.Stop()
-	}
-}
-
-func (b *Bot) restartGamble() {
-	b.stopGamble()
-	b.mu.Lock()
-	ready := b.ready && b.canSendLocked()
-	b.mu.Unlock()
-	if !ready {
-		return
-	}
-	b.startGambleIfNeeded()
-}
-
-func (b *Bot) startHuntbotIfNeeded() {
-	if !b.settings().Huntbot.Enabled {
-		b.stopHuntbot()
-		return
-	}
-	b.mu.Lock()
-	if b.huntbotStarted {
-		b.mu.Unlock()
-		return
-	}
-	b.huntbotStarted = true
-	b.mu.Unlock()
-
-	ctx := b.newHuntbotContext()
-	b.huntbot = huntbot.NewHandler(ctx, b.token)
-	util.Go(b.logDanger, "huntbot", b.huntbot.Start)
-}
-
-func (b *Bot) stopHuntbot() {
-	if b.huntbot != nil {
-		b.huntbot.Stop()
-		b.huntbot = nil
-	}
-	b.huntbotStarted = false
-}
-
-func (b *Bot) restartHuntbot() {
-	b.stopHuntbot()
-	b.mu.Lock()
-	ready := b.ready && b.canSendLocked()
-	b.mu.Unlock()
-	if ready {
-		b.startHuntbotIfNeeded()
-	}
-}
-
-func (b *Bot) handleHuntbotMessage(msg *discord.Message) {
-	if msg == nil || msg.Author == nil || b.huntbot == nil || !b.settings().Huntbot.Enabled {
-		return
-	}
-	hbMsg := huntbot.Message{
-		ChannelID: msg.ChannelID.String(),
-		AuthorID:  msg.Author.ID.String(),
-		Content:   msg.Content,
-	}
-	for _, e := range msg.Embeds {
-		if e == nil {
-			continue
-		}
-		embed := huntbot.MessageEmbed{}
-		if e.Author != nil {
-			embed.Author = &huntbot.EmbedAuthor{Name: e.Author.Name}
-		}
-		for _, f := range e.Fields {
-			if f == nil {
-				continue
-			}
-			embed.Fields = append(embed.Fields, huntbot.EmbedField{Name: f.Name, Value: f.Value})
-		}
-		hbMsg.Embeds = append(hbMsg.Embeds, embed)
-	}
-	for _, a := range msg.Attachments {
-		if a == nil {
-			continue
-		}
-		hbMsg.Attachments = append(hbMsg.Attachments, huntbot.Attachment{URL: a.URL})
-	}
-	b.huntbot.HandleMessage(hbMsg)
-}
-
-type huntbotCtx struct {
-	bot *Bot
-}
-
-// sleepHandle identifies one in-flight sleep so a sleeper only clears its own.
-type sleepHandle struct {
-	cancel func()
-}
-
-func (b *Bot) newHuntbotContext() *huntbotCtx {
-	return &huntbotCtx{bot: b}
-}
-
-func (c *huntbotCtx) HuntChannelID() string {
-	if c == nil || c.bot == nil {
-		return ""
-	}
-	return c.bot.settings().Channels.Hunt
-}
-func (c *huntbotCtx) OwoBotID() string {
-	if c == nil || c.bot == nil {
-		return ""
-	}
-	return c.bot.settings().OwoID
-}
-func (c *huntbotCtx) Nickname() string {
-	if c == nil || c.bot == nil {
-		return ""
-	}
-	client := c.bot.discordClient()
-	user := c.bot.discordUser()
-	if client != nil && client.State != nil && user != nil {
-		for _, guild := range client.State.Guilds {
-			if guild == nil {
-				continue
-			}
-			if member, ok := client.State.GetMember(guild.ID, user.ID); ok && member != nil && member.Nick != "" {
-				return member.Nick
-			}
-		}
-	}
-	return c.bot.username()
-}
-func (c *huntbotCtx) Settings() config.Huntbot          { return c.bot.settings().Huntbot }
-func (c *huntbotCtx) RandomPrefix(cmds []string) string { return c.bot.randomPrefix(cmds) }
-func (c *huntbotCtx) CanSend() bool {
-	if c == nil || c.bot == nil {
-		return false
-	}
-	return c.bot.canSend()
-}
-func (c *huntbotCtx) SendMessage(channelID, text string) error {
-	if c == nil || c.bot == nil {
-		return nil
-	}
-	c.bot.enqueue(channelID, text)
-	return nil
-}
-func (c *huntbotCtx) Log(msg string) { c.bot.logInfo(msg) }
-
-func (c *huntbotCtx) Sleep(seconds float64) {
-	if c == nil || c.bot == nil || seconds <= 0 {
-		return
-	}
-	time.Sleep(time.Duration(seconds * float64(time.Second)))
-}
-
-// SleepUntil reports false if CancelSleep cut the wait short, so callers can
-// tell an elapsed timer from an aborted one.
-func (c *huntbotCtx) SleepUntil(seconds, noise float64) bool {
-	if c == nil || c.bot == nil {
-		return false
-	}
-	d := seconds
-	if noise > 0 {
-		d += rand.Float64() * noise
-	}
-	if d <= 0 {
-		return true
-	}
-
-	res := make(chan bool, 1)
-	var once sync.Once
-	timer := time.AfterFunc(time.Duration(d*float64(time.Second)), func() {
-		once.Do(func() { res <- true })
-	})
-	h := &sleepHandle{cancel: func() {
-		once.Do(func() {
-			timer.Stop()
-			res <- false
-		})
-	}}
-
-	c.bot.setSleep(h)
-	elapsed := <-res
-	c.bot.clearSleep(h)
-	return elapsed
-}
-
-func (c *huntbotCtx) CancelSleep() {
-	if c == nil || c.bot == nil {
-		return
-	}
-	c.bot.CancelSleep()
-}
-
-// setSleep makes h the active sleep, cancelling whichever one it replaces.
-func (b *Bot) setSleep(h *sleepHandle) {
-	b.sleepMu.Lock()
-	prev := b.sleep
-	b.sleep = h
-	b.sleepMu.Unlock()
-	if prev != nil {
-		prev.cancel()
-	}
-}
-
-func (b *Bot) clearSleep(h *sleepHandle) {
-	b.sleepMu.Lock()
-	if b.sleep == h {
-		b.sleep = nil
-	}
-	b.sleepMu.Unlock()
-}
-
-func (b *Bot) CancelSleep() {
-	b.sleepMu.Lock()
-	h := b.sleep
-	b.sleep = nil
-	b.sleepMu.Unlock()
-	if h != nil {
-		h.cancel()
-	}
-}
-
 // --- helpers ---
 
 func contextWithCancel() (done <-chan struct{}, cancel func()) {
 	ch := make(chan struct{})
 	return ch, func() { close(ch) }
-}
-
-func getEnv(key string) string {
-	return strings.TrimSpace(os.Getenv(key))
 }
