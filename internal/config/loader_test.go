@@ -30,7 +30,7 @@ func mustLoad(t *testing.T, path string) Settings {
 
 func TestLoadFromFileFillsMissingKeysFromDefaults(t *testing.T) {
 	// A minimal config must still come back fully populated.
-	path := writeConfig(t, `{"schemaVersion":1,"defaultChannel":"123456789012345678"}`)
+	path := writeConfig(t, `{"schemaVersion":2,"discord":{"defaultChannel":"123456789012345678"}}`)
 
 	got := mustLoad(t, path)
 
@@ -51,7 +51,7 @@ func TestLoadFromFileFillsMissingKeysFromDefaults(t *testing.T) {
 // below that fell back to Go zero values, which for a bool means "off".
 func TestLoadFromFileMergeIsDeep(t *testing.T) {
 	path := writeConfig(t, `{
-		"schemaVersion": 1,
+		"schemaVersion": 2,
 		"features": {"gamble": {"coinflip": {"enabled": true}}}
 	}`)
 
@@ -73,7 +73,7 @@ func TestLoadFromFileMergeIsDeep(t *testing.T) {
 }
 
 func TestLoadFromFileNestedMergeKeepsSiblings(t *testing.T) {
-	path := writeConfig(t, `{"schemaVersion":1,"features":{"hunt":{"enabled":false}}}`)
+	path := writeConfig(t, `{"schemaVersion":2,"features":{"hunt":{"enabled":false}}}`)
 
 	got := mustLoad(t, path)
 
@@ -94,7 +94,7 @@ func TestLoadFromFileNestedMergeKeepsSiblings(t *testing.T) {
 func TestLoadFromFileChecklistDefaultsOff(t *testing.T) {
 	// Existing configs predate the checklist loop; they must not silently start
 	// sending checklist commands after upgrading.
-	path := writeConfig(t, `{"schemaVersion":1,"features":{"hunt":{"enabled":true}}}`)
+	path := writeConfig(t, `{"schemaVersion":2,"features":{"hunt":{"enabled":true}}}`)
 
 	if mustLoad(t, path).Features.Checklist.Enabled {
 		t.Error("features.checklist defaulted to true; upgrade would change behavior")
@@ -117,7 +117,7 @@ func TestLoadFromFileMissingFileErrors(t *testing.T) {
 
 func TestLoadFromFileReportsUnknownKeys(t *testing.T) {
 	// A typo has to be reported: it otherwise reads as "left at its default".
-	path := writeConfig(t, `{"schemaVersion":1,"features":{"hunt":{"enbaled":true}}}`)
+	path := writeConfig(t, `{"schemaVersion":2,"features":{"hunt":{"enbaled":true}}}`)
 
 	_, res, err := loadFromFile(path, "")
 	if err != nil {
@@ -154,6 +154,76 @@ func TestDurationRoundTrip(t *testing.T) {
 func TestDurationRejectsBareNumber(t *testing.T) {
 	var d Duration
 	if err := json.Unmarshal([]byte(`5000`), &d); err == nil {
+		t.Fatal("expected an error for a unitless number")
+	}
+}
+
+// Most delays in a config are fixed, and writing those as an object put the
+// same string on the page twice and buried the ones that really do jitter.
+func TestRangeScalarShorthand(t *testing.T) {
+	var r Range
+	if err := json.Unmarshal([]byte(`"30s"`), &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if r.Min.Std() != 30*time.Second || r.Max.Std() != 30*time.Second {
+		t.Errorf("a bare duration should set both bounds, got %+v", r)
+	}
+
+	out, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != `"30s"` {
+		t.Errorf("marshalled %s, want \"30s\"", out)
+	}
+}
+
+func TestRangeObjectFormRoundTrips(t *testing.T) {
+	var r Range
+	if err := json.Unmarshal([]byte(`{"min":"10s","max":"30s"}`), &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if r.Min.Std() != 10*time.Second || r.Max.Std() != 30*time.Second {
+		t.Errorf("bounds lost: %+v", r)
+	}
+
+	out, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != `{"min":"10s","max":"30s"}` {
+		t.Errorf("marshalled %s, want the object form", out)
+	}
+}
+
+// A fixed range written the long way collapses on the next write. Every config
+// in the wild uses the object form, so this is the path that tidies them up.
+func TestRangeObjectWithEqualBoundsCollapses(t *testing.T) {
+	var r Range
+	if err := json.Unmarshal([]byte(`{"min":"5m","max":"5m"}`), &r); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	out, err := json.Marshal(r)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(out) != `"5m"` {
+		t.Errorf("marshalled %s, want \"5m\"", out)
+	}
+}
+
+// Range's own UnmarshalJSON takes this subtree away from the DisallowUnknownFields
+// probe in loadFromFile, so it has to do the check itself.
+func TestRangeRejectsUnknownKey(t *testing.T) {
+	var r Range
+	if err := json.Unmarshal([]byte(`{"min":"5s","mx":"9s"}`), &r); err == nil {
+		t.Fatal("expected an error for a misspelled bound; it would have loaded as max=0")
+	}
+}
+
+func TestRangeRejectsBareNumber(t *testing.T) {
+	var r Range
+	if err := json.Unmarshal([]byte(`5000`), &r); err == nil {
 		t.Fatal("expected an error for a unitless number")
 	}
 }
@@ -219,7 +289,7 @@ func TestNewLoaderWritesReloadableFile(t *testing.T) {
 func TestNewLoaderAdoptsUsernameKeyedFile(t *testing.T) {
 	dir := t.TempDir()
 	old := filepath.Join(dir, "someone.json")
-	if err := os.WriteFile(old, []byte(`{"schemaVersion":1,"prefix":"owo"}`), 0o644); err != nil {
+	if err := os.WriteFile(old, []byte(`{"schemaVersion":2,"discord":{"prefix":"owo"}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -242,7 +312,7 @@ func TestNewLoaderAdoptsUsernameKeyedFile(t *testing.T) {
 func TestNewLoaderRejectsInvalidConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "229948970904846336.json")
-	if err := os.WriteFile(path, []byte(`{"schemaVersion":1,"prefix":""}`), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(`{"schemaVersion":2,"discord":{"prefix":""}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -251,17 +321,29 @@ func TestNewLoaderRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+// unwatchedLoader is a Loader over a real file with no watcher goroutine. The
+// reload tests below drive reload() by hand; going through NewLoader would leave
+// its watcher racing them for the same edit, and whichever won would decide
+// whether the test saw the old settings or the new ones.
+func unwatchedLoader(t *testing.T) *Loader {
+	t.Helper()
+	l := &Loader{
+		path:     filepath.Join(t.TempDir(), "229948970904846336.json"),
+		settings: Defaults(),
+	}
+	if err := l.save(); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	return l
+}
+
 // A bad edit to a running bot's config must not be applied.
 func TestReloadKeepsPreviousSettingsOnInvalidEdit(t *testing.T) {
-	dir := t.TempDir()
-	l, _, err := NewLoader(dir, "229948970904846336", "someone", nil, nil)
-	if err != nil {
-		t.Fatalf("NewLoader: %v", err)
-	}
+	l := unwatchedLoader(t)
 	before := l.Get()
 
 	// min > max is rejected by Validate.
-	bad := `{"schemaVersion":1,"features":{"hunt":{"enabled":true,"delay":{"min":"30s","max":"5s"}}}}`
+	bad := `{"schemaVersion":2,"features":{"hunt":{"enabled":true,"delay":{"min":"30s","max":"5s"}}}}`
 	if err := os.WriteFile(l.Path(), []byte(bad), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -278,13 +360,9 @@ func TestReloadKeepsPreviousSettingsOnInvalidEdit(t *testing.T) {
 }
 
 func TestReloadAppliesValidEditAndReportsOldValue(t *testing.T) {
-	dir := t.TempDir()
-	l, _, err := NewLoader(dir, "229948970904846336", "someone", nil, nil)
-	if err != nil {
-		t.Fatalf("NewLoader: %v", err)
-	}
+	l := unwatchedLoader(t)
 
-	good := `{"schemaVersion":1,"prefix":"owo"}`
+	good := `{"schemaVersion":2,"discord":{"prefix":"owo"}}`
 	if err := os.WriteFile(l.Path(), []byte(good), 0o644); err != nil {
 		t.Fatal(err)
 	}

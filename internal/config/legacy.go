@@ -6,9 +6,10 @@ import (
 	"time"
 )
 
-// Everything in this file exists to read config files written before
-// SchemaVersion 1 and convert them in place. It is self-contained so it can be
-// deleted wholesale once no old files remain in the wild.
+// Everything in this file exists to read pre-1.0 config files — the shape with
+// no schemaVersion key at all — and convert them in place. It is self-contained
+// so it can be deleted wholesale once no old files remain in the wild. The
+// v1 → v2 hop is a much smaller job and lives in legacy_v1.go.
 
 type legacySettings struct {
 	Typing             bool           `json:"typing"`
@@ -251,16 +252,21 @@ func legacyDefaults() legacySettings {
 	}
 }
 
-// isLegacy reports whether raw JSON predates SchemaVersion 1. The absence of
-// the key is the signal — an old file has no way to claim a version.
-func isLegacy(data []byte) bool {
+// fileVersion reports the schemaVersion a file claims. A pre-1.0 file has no way
+// to claim one, so a missing key means 0. Unparseable JSON is reported as the
+// current version so the caller's own decode produces the real syntax error
+// rather than a misleading "migrating" message.
+func fileVersion(data []byte) int {
 	var probe struct {
 		SchemaVersion *int `json:"schemaVersion"`
 	}
 	if err := json.Unmarshal(data, &probe); err != nil {
-		return false
+		return SchemaVersion
 	}
-	return probe.SchemaVersion == nil
+	if probe.SchemaVersion == nil {
+		return 0
+	}
+	return *probe.SchemaVersion
 }
 
 // migrateLegacy converts a pre-1.0 file into current Settings. It also returns
@@ -281,7 +287,6 @@ func migrateLegacy(data []byte) (Settings, []string, error) {
 	s.OwoBotID = old.OwoID
 	s.DefaultChannel = old.Channels.Hunt
 	s.SendMessageInterval = millis(old.Interval.SendMessage, def.SendMessageInterval)
-	s.StopWhenChecklistDone = old.ChecklistCompleted
 	s.TrackBalance = old.CashCheck
 
 	f := &s.Features
@@ -316,9 +321,12 @@ func migrateLegacy(data []byte) (Settings, []string, error) {
 		Enabled: old.Status.Inventory,
 		Delay:   fixedMillis(old.Interval.Inventory, def.Features.Inventory.Delay),
 	}
-	f.Checklist = ScheduledFeature{
-		Enabled: old.Status.Checklist,
-		Delay:   fixedMillis(old.Interval.Checklist, def.Features.Checklist.Delay),
+	f.Checklist = ChecklistFeature{
+		ScheduledFeature: ScheduledFeature{
+			Enabled: old.Status.Checklist,
+			Delay:   fixedMillis(old.Interval.Checklist, def.Features.Checklist.Delay),
+		},
+		StopFarmingWhenDone: old.ChecklistCompleted,
 	}
 	f.Cookie = CookieFeature{Enabled: old.Status.Cookie, Target: old.Target.Cookie}
 	f.Lootbox = LootboxFeature{Enabled: old.Status.Lootbox, Fabled: old.Status.LootboxFabled}

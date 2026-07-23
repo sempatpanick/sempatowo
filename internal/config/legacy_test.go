@@ -56,12 +56,17 @@ const legacyExample = `{
   }
 }`
 
-func TestIsLegacyDetectsMissingSchemaVersion(t *testing.T) {
-	if !isLegacy([]byte(legacyExample)) {
-		t.Error("a file with no schemaVersion should be treated as legacy")
+func TestFileVersionReadsSchemaVersion(t *testing.T) {
+	if got := fileVersion([]byte(legacyExample)); got != 0 {
+		t.Errorf("fileVersion = %d for a file with no schemaVersion, want 0", got)
 	}
-	if isLegacy([]byte(`{"schemaVersion":1}`)) {
-		t.Error("a versioned file should not be treated as legacy")
+	if got := fileVersion([]byte(`{"schemaVersion":1}`)); got != 1 {
+		t.Errorf("fileVersion = %d, want 1", got)
+	}
+	// Unparseable JSON must not read as "old": the caller's own decode should
+	// produce the real syntax error rather than a misleading migration attempt.
+	if got := fileVersion([]byte(`{not json`)); got != SchemaVersion {
+		t.Errorf("fileVersion = %d for malformed JSON, want %d", got, SchemaVersion)
 	}
 }
 

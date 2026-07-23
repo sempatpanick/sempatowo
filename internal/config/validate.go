@@ -46,7 +46,7 @@ func (s Settings) Validate() error {
 		{"curse", f.Curse.ScheduledFeature},
 		{"zoo", f.Zoo},
 		{"inventory", f.Inventory},
-		{"checklist", f.Checklist},
+		{"checklist", f.Checklist.ScheduledFeature},
 		{"quest", ScheduledFeature{Enabled: f.Quest.Enabled, Channel: f.Quest.Channel, Delay: f.Quest.Delay}},
 	}
 	for _, sc := range scheduled {

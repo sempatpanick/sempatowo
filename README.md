@@ -35,8 +35,11 @@ go build -o sempatowo ./cmd/sempatowo
 cmd/sempatowo/     Entry point — loads .env, starts one bot per token
   main.go            wiring
   checkconfig.go     -check-config: validate everything without connecting
+cmd/gen-config-schema/  go:generate target for internal/config/config.schema.json
 internal/
-  config/          Schema, defaults, validation, hot-reload, legacy migration, env
+  config/          Schema, defaults, validation, hot-reload, migrations, env
+    format.go        the readable JSON writer used for config files
+    schemagen/       builds config.schema.json from the structs' doc comments
   farm/            Main bot: connection supervisor, message routing, subsystem adapters
     sender.go        outgoing message queue
     sched_state.go   farm command heap
@@ -54,7 +57,8 @@ internal/
   items/           Inventory item IDs (gems, crates, lootboxes)
   util/            Logger, panic recovery, helpers
 var/               All writable state (gitignored) — override with DATA_DIR
-  config/            per-account JSON, named after the Discord user ID
+  config/            per-account JSON, named after the Discord user ID,
+                     plus the generated config.schema.json they point at
   data/              daily-claim timestamps
   browser-profiles/  isolated Chrome profiles for captcha solving
 deps/              Vendored discordgo-self fork — see deps/README.md
@@ -68,47 +72,77 @@ file that fails validation is rejected with the previous settings left in force.
 
 ### Shape
 
-The file is organised one block per feature, so everything needed to run a
-feature is in one place:
+The top level is grouped by what a setting is about, and the rest is one block
+per feature, so everything needed to run a feature is in one place. This is the
+file as it is actually written — anything that fits on a line stays on a line:
 
-```jsonc
+```json
 {
-  "schemaVersion": 1,
-  "label": "sempatpanick",       // just for humans; the filename is the user ID
-  "prefix": "w",
-  "owoBotId": "408785106942164992",
-  "defaultChannel": "1513744333579489310",
-  "sendMessageInterval": "5s",
+  "$schema": "config.schema.json",
+  "schemaVersion": 2,
+  "label": "sempatpanick",
   "trackBalance": true,
-  "stopWhenChecklistDone": false,
-
+  "discord": {
+    "prefix": "w",
+    "defaultChannel": "1513744333579489310",
+    "owoBotId": "408785106942164992"
+  },
+  "humanize": { "typing": true, "sendMessageInterval": "5s" },
   "features": {
-    "hunt":   { "enabled": true, "delay": { "min": "50s", "max": "3m20s" } },
+    "hunt": { "enabled": true, "delay": { "min": "50s", "max": "3m20s" } },
     "battle": { "enabled": true, "delay": { "min": "50s", "max": "3m20s" } },
-    "pray":   { "enabled": true, "delay": { "min": "5m5s", "max": "5m5s" }, "target": "" },
+    "pray": { "enabled": true, "delay": "5m5s", "target": "" },
+    "checklist": { "enabled": false, "delay": "16m40s", "stopFarmingWhenDone": false },
     "cookie": { "enabled": false, "target": "469369739131617291" },
     "lootbox": { "enabled": true, "fabled": true },
+    "crate": { "enabled": true },
     "quest": {
       "enabled": false,
-      "channel": "",             // "" = use defaultChannel
-      "delay":    { "min": "1m",  "max": "1m"  },
-      "owoDelay": { "min": "32s", "max": "32s" },
+      "delay": "1m",
+      "owoDelay": "32s",
       "auto": { "enabled": false, "acknowledgeExperimental": false }
     },
     "huntbot": { "enabled": false, "cashToSpend": 10000 },
-    "gamble":  { "allottedAmount": 10000 }
+    "gamble": { "allottedAmount": 10000 }
   }
 }
 ```
 
-### Two rules worth knowing
+| Top-level block | What is in it |
+| --------------- | ------------- |
+| `discord` | `prefix`, `defaultChannel`, `owoBotId` — how commands are addressed |
+| `humanize` | `typing`, `sendMessageInterval` — knobs whose only job is not looking like a program |
+| `trackBalance` | Not grouped: the running cash total the gamble limits and the daily handler both depend on |
+| `features` | One block per automated behaviour |
+
+`label` is for humans reading the directory; the filename is the user ID, which
+does not change when the username does.
+
+### Three rules worth knowing
 
 **Durations are strings.** `"15s"`, `"5m"`, `"1m30s"` — anything Go's
 `time.ParseDuration` accepts. A bare number is rejected rather than guessed at.
 
-**Every wait is a `{min, max}` range.** A fixed interval is `min == max`, but
-jitter is always available; a perfectly periodic command is the easiest kind of
-automation to spot.
+**Every wait is a range, written one of two ways.** `"delay": "5m"` is a fixed
+wait; `"delay": { "min": "50s", "max": "3m20s" }` jitters between the two. Both
+forms are accepted everywhere, and a fixed one is rewritten to the short form.
+Jitter is available on every scheduled command, not just hunt and battle — a
+perfectly periodic command is the easiest kind of automation to spot.
+
+**A feature's channel falls back to `defaultChannel`.** Set `"channel"` inside a
+scheduled block only when it should go somewhere else.
+
+### Editor support
+
+The `"$schema"` key points at `config.schema.json`, written next to your configs
+on every start. VS Code and JetBrains pick it up with no setup: hovering a key
+shows its documentation, unknown keys are underlined, and autocomplete offers the
+settings that exist. It is generated from the Go source — after changing a
+setting, run:
+
+```bash
+go generate ./internal/config
+```
 
 ### Features
 
@@ -116,7 +150,7 @@ automation to spot.
 | ----- | ----------- |
 | `hunt`, `battle` | The core loops |
 | `pray`, `curse` | Scheduled, with an optional `target` (empty = yourself) |
-| `zoo`, `inventory`, `checklist` | Periodic status commands |
+| `zoo`, `inventory`, `checklist` | Periodic status commands; `checklist.stopFarmingWhenDone` halts farming once every item is ticked |
 | `cookie` | Sent from the checklist reply, to `target` |
 | `lootbox` (`fabled`), `crate`, `gems` | Opened/used as inventory reports them |
 | `daily` | Standalone daily claim at PST midnight reset |
@@ -125,10 +159,7 @@ automation to spot.
 | `gamble` | Coinflip, slots, blackjack, with `allottedAmount` and `goalSystem` limits |
 
 Every scheduled block takes `enabled`, `delay`, and an optional `channel` that
-overrides `defaultChannel`.
-
-Top-level: `trackBalance` keeps the running cash total the gamble limits depend
-on, and `stopWhenChecklistDone` halts farming once the checklist is fully ticked.
+overrides `discord.defaultChannel`.
 
 ### Validation
 
@@ -144,13 +175,23 @@ a coinflip with neither side selected, gambling with `trackBalance` off — and
 warnings, like auto-quest enabled but not acknowledged, or hunt and huntbot both
 switched on.
 
-### Upgrading from the old format
+### Upgrading from an older format
 
-A config file with no `schemaVersion` is migrated automatically on first start.
-The original is kept alongside it as `*.json.v0.bak`, and a file named after
-your username is renamed to your user ID. The one thing that does not migrate
-into the new file is `ocrApi` — it is a credential, so it moved to the
-environment as `OCR_API_KEY`; the migration prints the value it found.
+Any config older than the current `schemaVersion` is migrated automatically on
+first start, and the original is kept alongside it as `*.json.v{N}.bak`, named
+after the version it came from. A file named after your username is also renamed
+to your user ID.
+
+**Pre-1.0 → v1** flattened `status`/`interval`/`channels`/`target` into one block
+per feature and made every duration a string with its unit. The one thing that
+does not migrate is `ocrApi` — it is a credential, so it moved to the environment
+as `OCR_API_KEY`; the migration prints the value it found so you can paste it
+into `.env`.
+
+**v1 → v2** grouped the top level. `prefix`, `defaultChannel` and `owoBotId`
+moved under `discord`; `typing` and `sendMessageInterval` under `humanize`; and
+`stopWhenChecklistDone` became `features.checklist.stopFarmingWhenDone`. Nothing
+else changed, and no value is lost.
 
 ## Environment variables
 

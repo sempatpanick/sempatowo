@@ -53,7 +53,12 @@ func runCheckConfig(env *config.Env) int {
 		}
 		fmt.Printf("%s (%s): OK\n", name, label)
 		if res.Migrated {
-			fmt.Println("  → pre-1.0 format; it will be migrated on next start (run with a backup)")
+			from := fmt.Sprintf("schemaVersion %d", res.FromVersion)
+			if res.FromVersion == 0 {
+				from = "pre-1.0 format"
+			}
+			fmt.Printf("  → %s; it will be migrated to schemaVersion %d on next start (run with a backup)\n",
+				from, config.SchemaVersion)
 		}
 		for _, note := range res.Notes {
 			fmt.Printf("  · %s\n", note)
@@ -81,7 +86,9 @@ func configFiles(dir string) ([]string, error) {
 
 	var out []string
 	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".json" {
+		// The generated schema sits in this directory too, and it is not an
+		// account — validating it as one would report a bogus failure.
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" || e.Name() == config.SchemaFileName {
 			continue
 		}
 		out = append(out, filepath.Join(dir, e.Name()))
