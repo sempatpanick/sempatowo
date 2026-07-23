@@ -70,8 +70,8 @@ func TestResendFollowsRemainingTimePlusPadding(t *testing.T) {
 	if f.noise[0] != 0 {
 		t.Fatalf("noise = %v, want 0 so the delay tracks the reported time exactly", f.noise[0])
 	}
-	if len(f.sent) != 1 || f.sent[0] != "owo huntbot 100" {
-		t.Fatalf("sent = %v, want one autohunt after the wait", f.sent)
+	if len(f.sent) != 1 || f.sent[0] != "owo huntbot" {
+		t.Fatalf("sent = %v, want one bare autohunt after the wait", f.sent)
 	}
 }
 
@@ -89,8 +89,31 @@ func TestResendFollowsBackInMessage(t *testing.T) {
 	if len(f.slept) != 1 || f.slept[0] != want {
 		t.Fatalf("slept = %v, want single delay of %v", f.slept, want)
 	}
-	if len(f.sent) != 1 || f.sent[0] != "owo huntbot 100" {
-		t.Fatalf("sent = %v, want one autohunt after the wait", f.sent)
+	if len(f.sent) != 1 || f.sent[0] != "owo huntbot" {
+		t.Fatalf("sent = %v, want one bare autohunt after the wait", f.sent)
+	}
+}
+
+// The amount is only accepted as the second half of the exchange: OwO drops
+// `hb <amount>` sent cold, which left the farm resending into silence.
+func TestResendReopensBareThenSendsAmount(t *testing.T) {
+	f := newFake()
+	h := NewHandler(f, "token")
+
+	h.HandleMessage(Message{
+		ChannelID: "hunt",
+		AuthorID:  "owo",
+		Content:   "tester I WILL BE BACK IN **10M**",
+	})
+	if len(f.sent) != 1 || f.sent[0] != "owo huntbot" {
+		t.Fatalf("sent = %v, want the bare command to reopen", f.sent)
+	}
+
+	// OwO answers the bare command with HuntBot's status embed; that reply is
+	// what authorises the amount.
+	h.HandleMessage(hbEmbed(EmbedField{Name: "Efficiency", Value: "Lvl 1 [0/10]"}))
+	if len(f.sent) != 2 || f.sent[1] != "owo huntbot 100" {
+		t.Fatalf("sent = %v, want the amount after the status embed", f.sent)
 	}
 }
 
