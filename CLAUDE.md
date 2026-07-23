@@ -109,7 +109,9 @@ One JSON file per account at `var/config/{discord_user_id}.json` (keyed by ID, n
 - `legacy.go` (pre-1.0 → v1) and `legacy_v1.go` (v1 → v2) — migrations run on load, keeping the
   original as `*.json.v{N}.bak`. Bumping `SchemaVersion` means adding a migration and a case in
   `loadFromFile`.
-- `validate.go` — errors block loading; `Warnings()` are advisory (e.g. hunt and huntbot both on).
+- `validate.go` — errors block loading; `Warnings()` are advisory (e.g. gems on with inventory
+  off). A warning must name a real interaction: `hunt` and `huntbot` are independent OwO features
+  that only share the send queue, so running both is not one.
 
 `config.schema.json` is generated from the struct doc comments by `internal/config/schemagen`,
 checked in, embedded, and written next to the user's configs on every start.
