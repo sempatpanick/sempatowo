@@ -195,11 +195,6 @@ func TestWarnings(t *testing.T) {
 			want: "acknowledgeExperimental",
 		},
 		{
-			name: "huntbot and manual hunt both on",
-			mut:  func(s *Settings) { s.Features.Huntbot.Enabled = true },
-			want: "huntbot takes over hunting",
-		},
-		{
 			name: "gems without inventory checks",
 			mut:  func(s *Settings) { s.Features.Inventory.Enabled = false },
 			want: "features.gems",
@@ -225,6 +220,22 @@ func TestWarnings(t *testing.T) {
 				t.Errorf("Validate() = %v, want nil — this case should only warn", err)
 			}
 		})
+	}
+}
+
+// HuntBot is its own OwO feature, not an alternative implementation of hunting:
+// it runs on essence and reports back on its own schedule while `owo hunt`
+// keeps working. The two only share the outgoing queue, so having both on is a
+// normal setup and must not warn.
+func TestWarningsAllowsHuntAndHuntbotTogether(t *testing.T) {
+	s := Defaults()
+	s.Features.Hunt.Enabled = true
+	s.Features.Huntbot.Enabled = true
+
+	for _, w := range s.Warnings() {
+		if strings.Contains(w, "huntbot") {
+			t.Errorf("Warnings() = %q, want nothing about huntbot vs hunt", w)
+		}
 	}
 }
 

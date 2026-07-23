@@ -155,7 +155,7 @@ go generate ./internal/config
 | `lootbox` (`fabled`), `crate`, `gems` | Opened/used as inventory reports them |
 | `daily` | Standalone daily claim at PST midnight reset |
 | `quest` | Quest log checks; `quest.auto` is the experimental full auto-quest |
-| `huntbot` | Use HuntBot instead of manual hunt, with essence upgrades |
+| `huntbot` | HuntBot autohunt with essence upgrades; independent of `hunt`, both can run |
 | `gamble` | Coinflip, slots, blackjack, with `allottedAmount` and `goalSystem` limits |
 
 Every scheduled block takes `enabled`, `delay`, and an optional `channel` that
@@ -172,8 +172,8 @@ go run ./cmd/sempatowo -check-config
 
 It reports errors — an enabled feature with no channel, an inverted delay range,
 a coinflip with neither side selected, gambling with `trackBalance` off — and
-warnings, like auto-quest enabled but not acknowledged, or hunt and huntbot both
-switched on.
+warnings, like auto-quest enabled but not acknowledged, or gems switched on with
+inventory checks off.
 
 ### Upgrading from an older format
 

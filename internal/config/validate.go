@@ -173,9 +173,6 @@ func (s Settings) Warnings() []string {
 	if f.Quest.Auto.Enabled && !f.Quest.Auto.AcknowledgeExperimental {
 		out = append(out, "features.quest.auto is enabled but acknowledgeExperimental is false — auto-quest will not run")
 	}
-	if f.Huntbot.Enabled && f.Hunt.Enabled {
-		out = append(out, "features.huntbot and features.hunt are both enabled — huntbot takes over hunting")
-	}
 	if !s.TrackBalance && f.Daily.Enabled {
 		out = append(out, "trackBalance is off — daily rewards will not be counted towards the gamble budget")
 	}
