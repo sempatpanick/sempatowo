@@ -24,12 +24,22 @@ const briefCooldownMax = 8.0
 // autohunt lands just after HuntBot is free again, never a tick early.
 const resendPadding = 3.0
 
+// pairGap separates the bare command from the amount that follows it, so the
+// two land as a pair rather than a burst.
+const pairGap = 3.0
+
+// pairEchoWindow is how long after a paired resend the HuntBot status embed is
+// read as the answer to that pair, and so does not trigger an amount send of
+// its own. A later embed is a fresh one and drives its own send.
+const pairEchoWindow = 15 * time.Second
+
 // Handler manages HuntBot autohunt commands and upgrades.
 type Handler struct {
 	bot            BotContext
 	token          string
 	upgradeDetails UpgradeDetails
 	upgradeWaiters []chan struct{}
+	lastPair       time.Time
 	mu             sync.Mutex
 }
 
@@ -133,6 +143,11 @@ func (h *Handler) HandleMessage(msg Message) {
 			}
 		}
 
+		// A resend already sent its own amount right behind the bare command;
+		// this embed is that pair's answer, not a cue for another one.
+		if h.pairEcho() {
+			continue
+		}
 		h.startAfter(briefCooldownMin)
 		h.bot.Log("huntbot back! sending next huntbot command.")
 	}
@@ -161,7 +176,7 @@ func (h *Handler) handlePasswordRetry(content string) {
 	}
 	h.bot.Log("huntbot stuck in password, retrying")
 	// The password prompt answers an amount-carrying command, so the retry
-	// carries the amount too rather than starting the probe over.
+	// carries the amount too rather than re-opening the exchange.
 	h.startAfter(secs)
 }
 
@@ -179,27 +194,53 @@ func (h *Handler) resendAfterRemaining(secs int) {
 	if !h.bot.SleepUntil(delay, 0) {
 		return
 	}
-	h.sendAutohunt("", false)
+	h.sendAutohuntPair()
 }
 
-// resendAfter waits, then sends the bare autohunt command. OwO ignores an
-// amount sent cold — the amount only takes once HuntBot has reported its own
-// state — so a resend always re-opens with `{prefix} hb` and lets the reply
-// (the status embed, handled above) fire startAfter with the cash.
+// resendAfter waits, then re-opens HuntBot with the pair of commands.
 func (h *Handler) resendAfter(seconds float64) {
 	if !h.bot.SleepUntil(seconds, 30) {
 		return
 	}
-	h.sendAutohunt("", false)
+	h.sendAutohuntPair()
 }
 
-// startAfter waits, then sends the autohunt command carrying the cash amount.
-// Only valid as the second half of the exchange resendAfter opens.
+// startAfter waits, then sends the amount on its own. Only for the paths where
+// the exchange is already open: the status embed, and the password retry.
 func (h *Handler) startAfter(seconds float64) {
 	if !h.bot.SleepUntil(seconds, 30) {
 		return
 	}
 	h.sendAutohunt("", true)
+}
+
+// sendAutohuntPair re-opens HuntBot with the bare command and then sends the
+// amount behind it. Both halves go out from here rather than letting the reply
+// to the bare command drive the second: OwO's answer is not always an embed the
+// reply path recognises, and when it was not, the resend stopped at
+// `{prefix} hb` and the farm never started hunting again.
+func (h *Handler) sendAutohuntPair() {
+	h.sendAutohunt("", false)
+	h.markPair()
+	// The reply cancels in-flight sleeps as it lands, so a cut-short gap is
+	// expected here. sendAutohunt's own CanSend check is what holds the amount
+	// back when the bot is paused or torn down.
+	h.bot.SleepUntil(pairGap, 2)
+	h.sendAutohunt("", true)
+}
+
+func (h *Handler) markPair() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.lastPair = time.Now()
+}
+
+// pairEcho reports whether a paired resend just went out, so its reply can be
+// told apart from a status embed that arrives on its own.
+func (h *Handler) pairEcho() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return !h.lastPair.IsZero() && time.Since(h.lastPair) < pairEchoWindow
 }
 
 func (h *Handler) sendAutohunt(password string, withCash bool) {
