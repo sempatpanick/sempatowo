@@ -175,9 +175,22 @@ func (b *Bot) scheduleNextChecklist() {
 		return
 	}
 	interval := int(s.Features.Checklist.Delay.Pick() / time.Millisecond)
+
+	b.mu.Lock()
+	// The first schedule after a captcha continues the interrupted wait instead
+	// of drawing a fresh interval.
+	if left := b.checklistResume; left > 0 {
+		b.checklistResume = 0
+		interval = int(left / time.Millisecond)
+	}
 	if interval <= 0 {
+		b.checklistDue = time.Time{}
+		b.mu.Unlock()
 		return
 	}
+	b.checklistDue = time.Now().Add(time.Duration(interval) * time.Millisecond)
+	b.mu.Unlock()
+
 	b.scheduleTimer("checklist", interval, b.startChecklistLoop)
 }
 
