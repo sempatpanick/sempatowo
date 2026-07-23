@@ -133,7 +133,7 @@ func (h *Handler) HandleMessage(msg Message) {
 			}
 		}
 
-		h.resendAfter(briefCooldownMin)
+		h.startAfter(briefCooldownMin)
 		h.bot.Log("huntbot back! sending next huntbot command.")
 	}
 }
@@ -160,7 +160,9 @@ func (h *Handler) handlePasswordRetry(content string) {
 		}
 	}
 	h.bot.Log("huntbot stuck in password, retrying")
-	h.resendAfter(secs)
+	// The password prompt answers an amount-carrying command, so the retry
+	// carries the amount too rather than starting the probe over.
+	h.startAfter(secs)
 }
 
 // resendAfterRemaining waits out the time OwO says HuntBot has left, plus a
@@ -177,10 +179,23 @@ func (h *Handler) resendAfterRemaining(secs int) {
 	if !h.bot.SleepUntil(delay, 0) {
 		return
 	}
-	h.sendAutohunt("", true)
+	h.sendAutohunt("", false)
 }
 
+// resendAfter waits, then sends the bare autohunt command. OwO ignores an
+// amount sent cold — the amount only takes once HuntBot has reported its own
+// state — so a resend always re-opens with `{prefix} hb` and lets the reply
+// (the status embed, handled above) fire startAfter with the cash.
 func (h *Handler) resendAfter(seconds float64) {
+	if !h.bot.SleepUntil(seconds, 30) {
+		return
+	}
+	h.sendAutohunt("", false)
+}
+
+// startAfter waits, then sends the autohunt command carrying the cash amount.
+// Only valid as the second half of the exchange resendAfter opens.
+func (h *Handler) startAfter(seconds float64) {
 	if !h.bot.SleepUntil(seconds, 30) {
 		return
 	}
