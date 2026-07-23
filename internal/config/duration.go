@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -62,9 +63,52 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 
 // Range is an inclusive min/max duration pair. Every "wait somewhere between
 // these two times" setting uses it, so there is one shape to learn.
+//
+// In JSON it is written either as an object, {"min": "10s", "max": "30s"}, or —
+// when both bounds are the same — as a bare duration, "10s". Most of the delays
+// in a config file are fixed, and spelling those out as an object put the same
+// string on the page twice and buried the ones that actually do jitter.
 type Range struct {
 	Min Duration `json:"min"`
 	Max Duration `json:"max"`
+}
+
+// rangeJSON exists only to give Range's object form a type to decode into that
+// does not inherit Range's own UnmarshalJSON.
+type rangeJSON struct {
+	Min Duration `json:"min"`
+	Max Duration `json:"max"`
+}
+
+func (r Range) MarshalJSON() ([]byte, error) {
+	if r.Min == r.Max {
+		return json.Marshal(r.Min.String())
+	}
+	return json.Marshal(rangeJSON{Min: r.Min, Max: r.Max})
+}
+
+func (r *Range) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		var d Duration
+		if err := d.UnmarshalJSON(data); err != nil {
+			return err
+		}
+		r.Min, r.Max = d, d
+		return nil
+	}
+
+	// Taking over this subtree takes it away from the DisallowUnknownFields
+	// probe in loader.go, so the check has to be repeated here — otherwise
+	// {"min": "5s", "mx": "9s"} would silently load as a max of zero.
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	var obj rangeJSON
+	if err := dec.Decode(&obj); err != nil {
+		return fmt.Errorf("range must be a duration like \"15s\" or an object like "+
+			"{\"min\": \"10s\", \"max\": \"30s\"}: %w", err)
+	}
+	r.Min, r.Max = obj.Min, obj.Max
+	return nil
 }
 
 // Pick returns a uniformly random duration in [Min, Max]. A zero or inverted

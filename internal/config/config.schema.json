@@ -1,0 +1,783 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "Settings holds all runtime options for one Discord account. The layout is feature-first: everything needed to run one feature lives in one block. The pre-1.0 schema split each feature across status/interval/ channels/target plus a top-level gate, so enabling a feature meant editing up to five places and forgetting one silently did nothing. The top level is grouped by what a setting is *about* rather than left as a flat pile: addressing in Discord, looking human, and the features themselves. Field order here is the order the file is written in, so it runs identity, then the two keys people actually edit, then machinery. Discord and Humanize are embedded *with* a JSON tag, which nests them in the file while Go still promotes their fields. Grouping the file therefore cost no churn at the ~20 call sites that read s.Prefix or s.OwoBotID, and s.Discord.Prefix stays available for new code that wants to be explicit.",
+  "properties": {
+    "$schema": {
+      "description": "Schema points editors at the generated JSON Schema sitting next to this file, which is where the documentation for every key below lives — JSON cannot carry comments, and this file is rewritten by the program.",
+      "type": "string"
+    },
+    "discord": {
+      "additionalProperties": false,
+      "description": "Discord is how commands are addressed: what to type, where to send it, and whose replies to listen for.",
+      "properties": {
+        "defaultChannel": {
+          "description": "DefaultChannel is where commands go unless a feature overrides it.",
+          "type": "string"
+        },
+        "owoBotId": {
+          "description": "OwoBotID is the bot whose messages are treated as OwO's replies.",
+          "type": "string"
+        },
+        "prefix": {
+          "description": "Prefix is the OwO command prefix, without the trailing space.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "features": {
+      "additionalProperties": false,
+      "description": "Features groups one block per automated behaviour. The one-line blocks come first so the top of the file is a scannable on/off list, with the three large nested ones last.",
+      "properties": {
+        "battle": {
+          "additionalProperties": false,
+          "description": "ScheduledFeature runs a command on a repeating randomised delay. A fixed interval is expressed as min == max; jitter is available everywhere rather than only on hunt and battle, since a perfectly periodic command is the easiest kind of automation to spot.",
+          "properties": {
+            "channel": {
+              "description": "Channel overrides Settings.DefaultChannel when non-empty.",
+              "type": "string"
+            },
+            "delay": {
+              "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+              "oneOf": [
+                {
+                  "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    "min": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "checklist": {
+          "additionalProperties": false,
+          "description": "ChecklistFeature is the periodic checklist check. Whether a finished checklist should stop farming is a property of the checklist, so it lives here rather than as a top-level flag the way it did before v2.",
+          "properties": {
+            "channel": {
+              "description": "Channel overrides Settings.DefaultChannel when non-empty.",
+              "type": "string"
+            },
+            "delay": {
+              "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+              "oneOf": [
+                {
+                  "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    "min": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "stopFarmingWhenDone": {
+              "description": "StopFarmingWhenDone halts the farm timers once every item is ticked.",
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "cookie": {
+          "additionalProperties": false,
+          "description": "CookieFeature is triggered by the checklist rather than on a timer.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "crate": {
+          "additionalProperties": false,
+          "description": "Toggle is a feature with nothing to configure but on/off.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "curse": {
+          "additionalProperties": false,
+          "description": "TargetedFeature is a scheduled command aimed at another user (\"\" = self).",
+          "properties": {
+            "channel": {
+              "description": "Channel overrides Settings.DefaultChannel when non-empty.",
+              "type": "string"
+            },
+            "delay": {
+              "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+              "oneOf": [
+                {
+                  "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    "min": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "daily": {
+          "additionalProperties": false,
+          "description": "Toggle is a feature with nothing to configure but on/off.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "gamble": {
+          "additionalProperties": false,
+          "properties": {
+            "allottedAmount": {
+              "type": "integer"
+            },
+            "blackjack": {
+              "additionalProperties": false,
+              "properties": {
+                "cooldown": {
+                  "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+                  "oneOf": [
+                    {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "max": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        },
+                        "min": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "multiplierOnLose": {
+                  "type": "number"
+                },
+                "startValue": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "coinflip": {
+              "additionalProperties": false,
+              "properties": {
+                "cooldown": {
+                  "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+                  "oneOf": [
+                    {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "max": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        },
+                        "min": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "multiplierOnLose": {
+                  "type": "number"
+                },
+                "options": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "heads": {
+                      "type": "boolean"
+                    },
+                    "tails": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "startValue": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            },
+            "goalSystem": {
+              "additionalProperties": false,
+              "properties": {
+                "amount": {
+                  "type": "integer"
+                },
+                "enabled": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "slots": {
+              "additionalProperties": false,
+              "properties": {
+                "cooldown": {
+                  "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+                  "oneOf": [
+                    {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "max": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        },
+                        "min": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "multiplierOnLose": {
+                  "type": "number"
+                },
+                "startValue": {
+                  "type": "integer"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "gems": {
+          "additionalProperties": false,
+          "description": "Toggle is a feature with nothing to configure but on/off.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "hunt": {
+          "additionalProperties": false,
+          "description": "ScheduledFeature runs a command on a repeating randomised delay. A fixed interval is expressed as min == max; jitter is available everywhere rather than only on hunt and battle, since a perfectly periodic command is the easiest kind of automation to spot.",
+          "properties": {
+            "channel": {
+              "description": "Channel overrides Settings.DefaultChannel when non-empty.",
+              "type": "string"
+            },
+            "delay": {
+              "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+              "oneOf": [
+                {
+                  "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    "min": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "huntbot": {
+          "additionalProperties": false,
+          "properties": {
+            "cashToSpend": {
+              "type": "integer"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "upgrader": {
+              "additionalProperties": false,
+              "properties": {
+                "cooldown": {
+                  "description": "Cooldown was \"sleeptime\" in the old schema, where it could be either a number or a [min,max] pair.",
+                  "oneOf": [
+                    {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "max": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        },
+                        "min": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "traits": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cost": {
+                      "type": "boolean"
+                    },
+                    "duration": {
+                      "type": "boolean"
+                    },
+                    "efficiency": {
+                      "type": "boolean"
+                    },
+                    "exp": {
+                      "type": "boolean"
+                    },
+                    "gain": {
+                      "type": "boolean"
+                    },
+                    "radar": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "weights": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "cost": {
+                      "type": "number"
+                    },
+                    "duration": {
+                      "type": "number"
+                    },
+                    "efficiency": {
+                      "type": "number"
+                    },
+                    "exp": {
+                      "type": "number"
+                    },
+                    "gain": {
+                      "type": "number"
+                    },
+                    "radar": {
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
+                }
+              },
+              "type": "object"
+            }
+          },
+          "type": "object"
+        },
+        "inventory": {
+          "additionalProperties": false,
+          "description": "ScheduledFeature runs a command on a repeating randomised delay. A fixed interval is expressed as min == max; jitter is available everywhere rather than only on hunt and battle, since a perfectly periodic command is the easiest kind of automation to spot.",
+          "properties": {
+            "channel": {
+              "description": "Channel overrides Settings.DefaultChannel when non-empty.",
+              "type": "string"
+            },
+            "delay": {
+              "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+              "oneOf": [
+                {
+                  "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    "min": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "lootbox": {
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "fabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
+        "pray": {
+          "additionalProperties": false,
+          "description": "TargetedFeature is a scheduled command aimed at another user (\"\" = self).",
+          "properties": {
+            "channel": {
+              "description": "Channel overrides Settings.DefaultChannel when non-empty.",
+              "type": "string"
+            },
+            "delay": {
+              "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+              "oneOf": [
+                {
+                  "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    "min": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "target": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "quest": {
+          "additionalProperties": false,
+          "properties": {
+            "auto": {
+              "additionalProperties": false,
+              "properties": {
+                "acknowledgeExperimental": {
+                  "description": "AcknowledgeExperimental is the safety gate: auto-quest clicks buttons and posts in shared channels, so it stays off until explicitly acknowledged.",
+                  "type": "boolean"
+                },
+                "checkCooldown": {
+                  "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+                  "oneOf": [
+                    {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    {
+                      "additionalProperties": false,
+                      "properties": {
+                        "max": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        },
+                        "min": {
+                          "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                },
+                "enableCommandsToCompleteQuest": {
+                  "type": "boolean"
+                },
+                "enabled": {
+                  "type": "boolean"
+                },
+                "helpChannel": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "channelId": {
+                      "type": "string"
+                    },
+                    "postInHelpChannel": {
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
+                "helpOthers": {
+                  "type": "boolean"
+                }
+              },
+              "type": "object"
+            },
+            "channel": {
+              "type": "string"
+            },
+            "delay": {
+              "description": "Delay is how often to re-check quest progress.",
+              "oneOf": [
+                {
+                  "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    "min": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "owoDelay": {
+              "description": "OwoDelay spaces out the plain \"owo\" messages used to complete the say-owo quest.",
+              "oneOf": [
+                {
+                  "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    "min": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            }
+          },
+          "type": "object"
+        },
+        "zoo": {
+          "additionalProperties": false,
+          "description": "ScheduledFeature runs a command on a repeating randomised delay. A fixed interval is expressed as min == max; jitter is available everywhere rather than only on hunt and battle, since a perfectly periodic command is the easiest kind of automation to spot.",
+          "properties": {
+            "channel": {
+              "description": "Channel overrides Settings.DefaultChannel when non-empty.",
+              "type": "string"
+            },
+            "delay": {
+              "description": "An inclusive wait range. Either a bare duration (\"30s\") for a fixed wait, or {\"min\": \"…\", \"max\": \"…\"} to jitter between two.",
+              "oneOf": [
+                {
+                  "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                  "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                  "type": "string"
+                },
+                {
+                  "additionalProperties": false,
+                  "properties": {
+                    "max": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    },
+                    "min": {
+                      "description": "A duration with its unit, as Go's time.ParseDuration accepts: \"15s\", \"5m\", \"1m30s\". A bare number is rejected rather than guessed at.",
+                      "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              ]
+            },
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "humanize": {
+      "additionalProperties": false,
+      "description": "Humanize is everything whose only purpose is to not look like a program. Future anti-detection knobs — active hours, long idle pauses — belong here.",
+      "properties": {
+        "sendMessageInterval": {
+          "description": "SendMessageInterval is the minimum spacing between outgoing messages.",
+          "pattern": "^-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$",
+          "type": "string"
+        },
+        "typing": {
+          "description": "Typing sends a typing indicator before each message.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "label": {
+      "description": "Label is the account's username. It is for humans reading the directory; the filename is the user ID, which does not change when the name does.",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "type": "integer"
+    },
+    "trackBalance": {
+      "description": "TrackBalance keeps a running cash total, which the gamble safety limits and the daily reward handler both depend on. It stays a top-level scalar rather than joining a group: it is genuinely cross-cutting, and a group of one reads worse than no group.",
+      "type": "boolean"
+    }
+  },
+  "title": "sempatowo account config",
+  "type": "object"
+}

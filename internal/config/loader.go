@@ -37,8 +37,11 @@ type Loader struct {
 type LoadResult struct {
 	// Created is true when the file did not exist and defaults were written.
 	Created bool
-	// Migrated is true when a pre-1.0 file was converted and rewritten.
+	// Migrated is true when an older file was converted and rewritten.
 	Migrated bool
+	// FromVersion is the schema version the file was migrated from. 0 is the
+	// pre-1.0 shape, which has no schemaVersion key.
+	FromVersion int
 	// BackupPath is where the pre-migration file was preserved.
 	BackupPath string
 	// Notes are migration remarks and unknown-key warnings.
@@ -88,19 +91,20 @@ func NewLoader(configDir, userID, label string, log Logger, onChange ChangeFunc)
 		}
 		l.settings = s
 		res.Migrated = r.Migrated
+		res.FromVersion = r.FromVersion
 		res.Notes = append(res.Notes, r.Notes...)
 
 		if r.Migrated {
-			res.BackupPath = path + ".v0.bak"
+			res.BackupPath = fmt.Sprintf("%s.v%d.bak", path, r.FromVersion)
 			if err := os.WriteFile(res.BackupPath, r.legacyRaw, 0o644); err != nil {
-				return nil, res, fmt.Errorf("backing up legacy config: %w", err)
+				return nil, res, fmt.Errorf("backing up config: %w", err)
 			}
 			if err := l.save(); err != nil {
 				return nil, res, err
 			}
 			res.Notes = append(res.Notes,
-				fmt.Sprintf("migrated to schemaVersion %d; original kept at %s",
-					SchemaVersion, filepath.Base(res.BackupPath)))
+				fmt.Sprintf("migrated from schemaVersion %d to %d; original kept at %s",
+					r.FromVersion, SchemaVersion, filepath.Base(res.BackupPath)))
 		}
 	}
 
@@ -132,12 +136,12 @@ func (l *Loader) set(s Settings) Settings {
 
 func (l *Loader) save() error {
 	l.mu.RLock()
-	data, err := json.MarshalIndent(l.settings, "", "  ")
+	data, err := marshalReadable(l.settings)
 	l.mu.RUnlock()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(l.path, append(data, '\n'), 0o644)
+	return os.WriteFile(l.path, data, 0o644)
 }
 
 func (l *Loader) info(msg string) {
@@ -225,7 +229,7 @@ func Inspect(path string) (Settings, LoadResult, error) {
 	return s, res, s.Validate()
 }
 
-// loadFromFile reads path, migrating it from the pre-1.0 shape if needed.
+// loadFromFile reads path, migrating it forward from an older schema if needed.
 func loadFromFile(path, label string) (Settings, LoadResult, error) {
 	var res LoadResult
 
@@ -234,8 +238,23 @@ func loadFromFile(path, label string) (Settings, LoadResult, error) {
 		return Settings{}, res, err
 	}
 
-	if isLegacy(data) {
-		s, notes, err := migrateLegacy(data)
+	// A migrating load returns here rather than falling through: the old
+	// spellings are not current keys, and unknownKeyNotes below would report
+	// every one of them as a typo on the single load that fixes them.
+	if v := fileVersion(data); v < SchemaVersion {
+		var (
+			s     Settings
+			notes []string
+			err   error
+		)
+		switch v {
+		case 0:
+			s, notes, err = migrateLegacy(data)
+		case 1:
+			s, notes, err = migrateV1(data)
+		default:
+			err = fmt.Errorf("no migration from schemaVersion %d", v)
+		}
 		if err != nil {
 			return Settings{}, res, err
 		}
@@ -243,6 +262,7 @@ func loadFromFile(path, label string) (Settings, LoadResult, error) {
 			s.Label = label
 		}
 		res.Migrated = true
+		res.FromVersion = v
 		res.legacyRaw = data
 		res.Notes = append(res.Notes, notes...)
 		return s, res, nil

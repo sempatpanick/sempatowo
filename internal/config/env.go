@@ -148,6 +148,13 @@ func (e *Env) EnsureDirs() error {
 			return fmt.Errorf("creating %s: %w", dir, err)
 		}
 	}
+	// The schema goes down here rather than when an account's config is first
+	// loaded, so that -check-config leaves it in place too — it is wanted the
+	// moment there is a directory to open in an editor, not only after a
+	// successful Discord login.
+	if err := WriteSchemaFile(e.Dirs.Config); err != nil {
+		return fmt.Errorf("writing %s: %w", SchemaFileName, err)
+	}
 	return nil
 }
 

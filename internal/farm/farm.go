@@ -741,7 +741,7 @@ func (b *Bot) handleChecklist(msg *discord.Message, nick string) {
 
 	if cl.allDone() {
 		b.log.Info("All checklist completed")
-		if s.StopWhenChecklistDone {
+		if s.Features.Checklist.StopFarmingWhenDone {
 			b.stopFarmTimers()
 			b.mu.Lock()
 			if !b.ready && b.canSendLocked() {
