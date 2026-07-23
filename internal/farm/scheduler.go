@@ -1,6 +1,7 @@
 package farm
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/semptpanick/sempatowo/internal/util"
@@ -122,10 +123,34 @@ func (b *Bot) farmCmdByName(name string) *farmCmdDef {
 	return nil
 }
 
+// resumeStagger spaces out commands that came due while the farm was paused. A
+// captcha pause lasts minutes, so by the time it is solved nearly everything is
+// overdue; sending them in one burst is the very pattern OwO's captcha triggers
+// on, and the queue would drip-feed them anyway.
+const resumeStagger = 3 * time.Second
+
 func (b *Bot) startFarmScheduler() {
+	// Before Begin: it supersedes the old run, and clears the saved schedule
+	// with it.
+	resume := b.sched.TakeSuspended()
+
 	stop, wake := b.sched.Begin()
 
 	now := time.Now()
+	if len(resume) > 0 {
+		b.pushResumedCommands(resume, now)
+	} else {
+		b.pushStartupCommands(now)
+	}
+	if b.sched.Init() == 0 {
+		b.sched.Abandon(stop)
+		return
+	}
+
+	util.Go(b.logDanger, "farmScheduler", func() { b.runFarmScheduler(stop, wake) })
+}
+
+func (b *Bot) pushStartupCommands(now time.Time) {
 	for _, def := range farmCommands {
 		if !def.enabled(b) {
 			continue
@@ -136,12 +161,51 @@ func (b *Bot) startFarmScheduler() {
 		}
 		b.sched.Push(def.name, now.Add(time.Duration(delay)*time.Millisecond))
 	}
-	if b.sched.Init() == 0 {
-		b.sched.Abandon(stop)
-		return
+}
+
+// pushResumedCommands restores the schedule captured when the farm paused, so a
+// captcha does not restart the cycle: a zoo that was 25 minutes into its delay
+// stays 25 minutes in rather than firing again the moment the captcha is
+// solved. Delays that have not run out are kept as absolute times — OwO's
+// cooldowns kept ticking through the pause — and everything already due is
+// staggered instead of dispatched at once.
+//
+// A command missing from the snapshot is treated as due now: it was either
+// dropped as the pause raced the run loop, or enabled in config while the farm
+// was paused. Either way the resumed cycle has to be complete, or that command
+// would never run again.
+func (b *Bot) pushResumedCommands(saved []scheduledCmd, now time.Time) {
+	seen := make(map[string]bool, len(saved))
+	overdue := 0
+	pushDue := func(name string) {
+		b.sched.Push(name, now.Add(time.Duration(overdue)*resumeStagger))
+		overdue++
 	}
 
-	util.Go(b.logDanger, "farmScheduler", func() { b.runFarmScheduler(stop, wake) })
+	for _, item := range saved {
+		def := b.farmCmdByName(item.name)
+		// Disabled while paused — do not resurrect a command the config
+		// no longer wants.
+		if def == nil || !def.enabled(b) || seen[item.name] {
+			continue
+		}
+		seen[item.name] = true
+		if item.nextRun.After(now) {
+			b.sched.Push(item.name, item.nextRun)
+			continue
+		}
+		pushDue(item.name)
+	}
+	for _, def := range farmCommands {
+		if seen[def.name] || !def.enabled(b) {
+			continue
+		}
+		seen[def.name] = true
+		pushDue(def.name)
+	}
+
+	b.log.Info(fmt.Sprintf("Resuming farm cycle where it paused (%d commands, %d due now)",
+		len(seen), overdue))
 }
 
 func (b *Bot) runFarmScheduler(stop <-chan struct{}, wake <-chan struct{}) {

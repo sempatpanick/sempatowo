@@ -140,6 +140,14 @@ against a 10-minute deadline. When browsers are not isolated per account, `brows
 serialises accounts through the one shared system browser — `AcquireBrowserSlot` /
 `ReleaseBrowserSlot` must stay paired, including on the deadline path.
 
+A pause is *suspend*, not stop: `handleCaptcha` calls `sched.Suspend`, which saves the heap plus
+the awaiting set, and `startFarmScheduler` restores it through `pushResumedCommands` instead of
+seeding every command from its startup delay. Delays that had not run out are kept as absolute
+times (OwO's cooldowns keep ticking through the pause); anything already due is staggered by
+`resumeStagger`, and any enabled command missing from the snapshot is treated as due now, so the
+cycle can never come back short. `sched.Stop` deliberately discards the snapshot — a reconnect or
+teardown starts clean. The checklist timer is preserved the same way, via `checklistResume`.
+
 ## Conventions
 
 - `deps/discordgo-self` is vendored third-party source wired in with a `replace` directive. It is

@@ -2,6 +2,7 @@ package farm
 
 import (
 	"container/heap"
+	"sort"
 	"sync"
 	"time"
 )
@@ -54,6 +55,10 @@ type farmSchedState struct {
 	// While a command sits here it is absent from the heap, which is why an
 	// empty heap does not mean the scheduler is finished.
 	awaiting map[string]struct{}
+
+	// suspended is the schedule saved by Suspend, waiting for the run that
+	// resumes it. Stop clears it: only a pause is meant to be resumable.
+	suspended []scheduledCmd
 }
 
 // Begin starts a new run, superseding any existing one, and returns its
@@ -97,6 +102,56 @@ func (s *farmSchedState) stopLocked() {
 	s.wake = nil
 	s.heap = nil
 	s.awaiting = nil
+	s.suspended = nil
+}
+
+// Suspend ends the current run but keeps its schedule, so a pause — a captcha —
+// can resume the cycle where it left off instead of restarting every command
+// from its startup delay. It reports how many commands were saved.
+//
+// Commands still awaiting a reply are saved too, dated now: while paused the
+// handlers ignore OwO, so their reply can never arrive and the resumed run must
+// send them again rather than wait forever. Without them they would be lost
+// entirely — an awaiting command is absent from the heap.
+func (s *farmSchedState) Suspend() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stop == nil {
+		return 0
+	}
+
+	now := time.Now()
+	pending := make([]string, 0, len(s.awaiting))
+	for name := range s.awaiting {
+		pending = append(pending, name)
+	}
+	// Map iteration is random; sort so a resume is reproducible.
+	sort.Strings(pending)
+
+	saved := make([]scheduledCmd, 0, len(s.heap)+len(pending))
+	for _, name := range pending {
+		saved = append(saved, scheduledCmd{name: name, nextRun: now})
+	}
+	for _, item := range s.heap {
+		saved = append(saved, *item)
+	}
+	sort.SliceStable(saved, func(i, j int) bool {
+		return saved[i].nextRun.Before(saved[j].nextRun)
+	})
+
+	s.stopLocked()
+	s.suspended = saved
+	return len(saved)
+}
+
+// TakeSuspended hands over the schedule saved by Suspend, clearing it so a
+// second run cannot resume the same state twice.
+func (s *farmSchedState) TakeSuspended() []scheduledCmd {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	saved := s.suspended
+	s.suspended = nil
+	return saved
 }
 
 // StopRun ends the run identified by stop, and reports whether it was still the

@@ -60,6 +60,11 @@ type Bot struct {
 	sched farmSchedState
 
 	checklistAwaiting bool
+	// checklistDue is when the armed checklist timer fires; checklistResume is
+	// what was left on it when the farm paused, so a captcha does not restart
+	// the checklist clock either.
+	checklistDue    time.Time
+	checklistResume time.Duration
 
 	timerCancel map[string]func()
 	questOwo    *questProgress
@@ -575,10 +580,12 @@ func (b *Bot) handleCaptcha() {
 	b.captchaSolving = true
 	b.active = false
 	b.ready = false
-	b.stopFarmTimersLocked()
+	b.suspendFarmTimersLocked()
 	b.mu.Unlock()
 
-	b.sched.Stop()
+	// Suspend, not Stop: solving the captcha resumes this cycle rather than
+	// restarting every command from its startup delay.
+	b.sched.Suspend()
 	b.sender.Clear()
 	b.sender.Stop()
 
@@ -1007,10 +1014,27 @@ func (b *Bot) stopFarmTimers() {
 	b.mu.Unlock()
 }
 
+// suspendFarmTimersLocked requires b.mu. Same teardown as
+// stopFarmTimersLocked, but it keeps the wait left on the checklist timer for
+// the resume, so a 10-minute captcha costs the checklist 10 minutes rather than
+// a whole fresh interval.
+func (b *Bot) suspendFarmTimersLocked() {
+	var left time.Duration
+	if !b.checklistDue.IsZero() {
+		left = time.Until(b.checklistDue)
+	}
+	b.stopFarmTimersLocked()
+	if left > 0 {
+		b.checklistResume = left
+	}
+}
+
 // stopFarmTimersLocked requires b.mu. It deliberately does not touch the
 // scheduler: that has its own lock and is stopped by the caller beforehand.
 func (b *Bot) stopFarmTimersLocked() {
 	b.checklistAwaiting = false
+	b.checklistDue = time.Time{}
+	b.checklistResume = 0
 	if cancel, ok := b.timerCancel["checklist"]; ok {
 		cancel()
 		delete(b.timerCancel, "checklist")
