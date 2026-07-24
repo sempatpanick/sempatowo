@@ -89,6 +89,9 @@ type Features struct {
 	Quest     QuestFeature     `json:"quest"`
 	Huntbot   Huntbot          `json:"huntbot"`
 	Gamble    Gamble           `json:"gamble"`
+	// MentionLog records every raw OwO message addressed to this account to
+	// var/data/{id}_mentions.log as a JSON array. Off by default.
+	MentionLog Toggle `json:"mentionLog"`
 }
 
 // Toggle is a feature with nothing to configure but on/off.
@@ -345,6 +348,7 @@ func Defaults() Settings {
 					Cooldown: rangeSecs(16, 18),
 				},
 			},
+			MentionLog: Toggle{Enabled: false},
 		},
 	}
 }

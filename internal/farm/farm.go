@@ -18,6 +18,7 @@ import (
 	"github.com/semptpanick/sempatowo/internal/gamble"
 	"github.com/semptpanick/sempatowo/internal/huntbot"
 	"github.com/semptpanick/sempatowo/internal/items"
+	"github.com/semptpanick/sempatowo/internal/mentionlog"
 	"github.com/semptpanick/sempatowo/internal/notify"
 	"github.com/semptpanick/sempatowo/internal/quest"
 	"github.com/semptpanick/sempatowo/internal/util"
@@ -71,6 +72,10 @@ type Bot struct {
 
 	// stats guards everything learned from OwO's replies with its own lock.
 	stats *farmStats
+
+	// mentionLog persists raw OwO messages addressed to this account, when the
+	// mentionLog feature is enabled. Constructed once at ready; nil until then.
+	mentionLog *mentionlog.Sink
 
 	// captchaTimers owns the countdown warnings and its own lock.
 	captchaTimers captchaTimers
@@ -274,6 +279,13 @@ func (b *Bot) onReady() {
 	}
 	b.log.SetID(user.Username)
 
+	// Construct the raw-mention sink once per account. Keep it before the
+	// reconnect early-return below so a session that only ever resumes still
+	// gets one; it just holds a path, so building it is cheap and idempotent.
+	if b.mentionLog == nil {
+		b.mentionLog = mentionlog.New(b.env.Dirs.Data, user.ID.String())
+	}
+
 	// onReady fires again after every reconnect. NewLoader starts a file
 	// watcher goroutine that cannot be stopped, so reuse the existing loader
 	// rather than leaking one per reconnect — same account, same config file.
@@ -415,6 +427,8 @@ func (b *Bot) onMessage(msg *discord.Message) {
 		return
 	}
 
+	b.logMention(msg, "create")
+
 	b.handleDailyMessage(msg, nick)
 	b.handleAutoQuestMessage(msg, nick)
 
@@ -468,6 +482,7 @@ func (b *Bot) onMessageUpdate(msg *discord.Message) {
 	if !b.isForMe(msg, nick) {
 		return
 	}
+	b.logMention(msg, "update")
 	if shouldSkipOwOLog(content) {
 		return
 	}
@@ -492,9 +507,12 @@ func (b *Bot) nickname(msg *discord.Message) string {
 	if msg == nil {
 		return b.username()
 	}
-	if msg.Member != nil && msg.Member.Nick != "" {
-		return msg.Member.Nick
-	}
+	// msg.Member is the message *author's* guild member, and every message this
+	// bot routes is authored by OwO — so msg.Member.Nick is OwO's nick, never
+	// ours. Using it made nick resolve to OwO's server nick, and every embed
+	// matched against nick (battle/quest/checklist/zoo summaries and farm
+	// recognition) silently dropped. Resolve our own nick from the state cache
+	// instead, falling back to the username.
 	client := b.discordClient()
 	user := b.discordUser()
 	if client != nil && client.State != nil && user != nil && msg.GuildID != 0 {
