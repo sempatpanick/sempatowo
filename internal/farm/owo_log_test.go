@@ -23,6 +23,17 @@ func TestSummarizeOwOMessage(t *testing.T) {
 			want: "Hunt → butterfly, snail (+2 pet xp)",
 		},
 		{
+			name: "hunt essence catch (single common)",
+			content: "**🌱 | sempatpanick** spent `5` <:essence:510366792800272394> and caught a " +
+				"**common** :bug:! | gained **1xp**!",
+			want: "Hunt → spent 5 and caught a common bug | gained 1xp!",
+		},
+		{
+			name:    "hunt plain catch (single common)",
+			content: "**🌱 | sempatpanick** caught a **common** :bug:! | gained **1xp**!",
+			want:    "Hunt → caught a common bug | gained 1xp!",
+		},
+		{
 			name:    "inventory",
 			content: "**====== sempatpanick's Inventory ======**\n`065`<:cgem3:510366792024195072>⁸    `066`<:ugem3:510366792095367189>³    `067`<:rgem3:510366792653340674>³",
 			want:    "Inventory → 3 items · cgem3×8, ugem3×3, rgem3×3",
