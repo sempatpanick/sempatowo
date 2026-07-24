@@ -160,7 +160,7 @@ func (h *Handler) HandleMessage(msg Message) {
 			continue
 		}
 		h.startAfter(briefCooldownMin)
-		h.bot.Log("huntbot back! sending next huntbot command.")
+		h.bot.Log("Huntbot → back! sending next command.")
 	}
 }
 
@@ -199,10 +199,10 @@ func (h *Handler) handlePassword(msg Message) {
 	}
 	ans, err := SolvePasswordCaptcha(msg.Attachments[0].URL, h.token)
 	if err != nil || ans == "" {
-		h.bot.Log("huntbot password solve failed")
+		h.bot.Log("Huntbot → password solve failed")
 		return
 	}
-	h.bot.Log("huntbot received password, attempting to solve!")
+	h.bot.Log("Huntbot → received password, attempting to solve!")
 	h.bot.SleepUntil(briefCooldownMin, briefCooldownMax-briefCooldownMin)
 	h.sendAutohunt(ans, true)
 }
@@ -214,7 +214,7 @@ func (h *Handler) handlePasswordRetry(content string) {
 			secs = float64(v * 60)
 		}
 	}
-	h.bot.Log("huntbot stuck in password, retrying")
+	h.bot.Log("Huntbot → stuck in password, retrying")
 	// The password prompt answers an amount-carrying command, so the retry
 	// carries the amount too rather than re-opening the exchange.
 	h.startAfter(secs)
@@ -225,12 +225,12 @@ func (h *Handler) handlePasswordRetry(content string) {
 // not be parsed, so fall back to a short jittered retry instead of hammering.
 func (h *Handler) resendAfterRemaining(secs int) {
 	if secs <= 0 {
-		h.bot.Log("huntbot remaining time unreadable, retrying shortly")
+		h.bot.Log("Huntbot → remaining time unreadable, retrying shortly")
 		h.resendAfter(briefCooldownMin)
 		return
 	}
 	delay := float64(secs) + resendPadding
-	h.bot.Log("huntbot will be back in " + strconv.Itoa(secs) + "s, resending in " + strconv.Itoa(int(delay)) + "s")
+	h.bot.Log("Huntbot → will be back in " + strconv.Itoa(secs) + "s, resending in " + strconv.Itoa(int(delay)) + "s")
 	if !h.bot.SleepUntil(delay, 0) {
 		return
 	}
