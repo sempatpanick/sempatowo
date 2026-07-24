@@ -507,9 +507,12 @@ func (b *Bot) nickname(msg *discord.Message) string {
 	if msg == nil {
 		return b.username()
 	}
-	if msg.Member != nil && msg.Member.Nick != "" {
-		return msg.Member.Nick
-	}
+	// msg.Member is the message *author's* guild member, and every message this
+	// bot routes is authored by OwO — so msg.Member.Nick is OwO's nick, never
+	// ours. Using it made nick resolve to OwO's server nick, and every embed
+	// matched against nick (battle/quest/checklist/zoo summaries and farm
+	// recognition) silently dropped. Resolve our own nick from the state cache
+	// instead, falling back to the username.
 	client := b.discordClient()
 	user := b.discordUser()
 	if client != nil && client.State != nil && user != nil && msg.GuildID != 0 {
