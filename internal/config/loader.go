@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -164,12 +165,25 @@ func (l *Loader) watch(onChange ChangeFunc) {
 	}
 	defer watcher.Close()
 
-	// Without this the loop below runs forever receiving nothing, and edits to
-	// the config file are silently ignored with no hint as to why.
-	if err := watcher.Add(l.path); err != nil {
-		l.danger(fmt.Sprintf("config watch error: cannot watch %s: %v (hot-reload disabled)", l.path, err))
+	// Watch the directory, not the file. Editors routinely save atomically —
+	// write a temp file, then rename it over the target — which arrives as
+	// REMOVE+CREATE (no WRITE) and, on Linux, unbinds a file-level watch from
+	// the file entirely, so every later edit is lost too. A directory watch
+	// survives the replacement and still reports the rename that lands the new
+	// contents. Without this the loop runs forever receiving nothing an
+	// atomic-saving editor produces, and edits are silently ignored.
+	dir := filepath.Dir(l.path)
+	if err := watcher.Add(dir); err != nil {
+		l.danger(fmt.Sprintf("config watch error: cannot watch %s: %v (hot-reload disabled)", dir, err))
 		return
 	}
+
+	// A single save emits a burst — CHMOD+WRITE in place, or REMOVE+CREATE for
+	// an atomic rename — so coalesce them behind a short timer. Reloading once
+	// per burst keeps onChange from restarting each subsystem several times for
+	// one edit.
+	const settle = 100 * time.Millisecond
+	var debounce *time.Timer
 
 	for {
 		select {
@@ -177,10 +191,19 @@ func (l *Loader) watch(onChange ChangeFunc) {
 			if !ok {
 				return
 			}
-			if event.Op&fsnotify.Write != fsnotify.Write {
+			// The directory reports every entry; ignore the editor's temp files
+			// and only react to writes/creates/renames of our own config.
+			if filepath.Clean(event.Name) != l.path {
 				continue
 			}
-			l.reload(onChange)
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) == 0 {
+				continue
+			}
+			if debounce == nil {
+				debounce = time.AfterFunc(settle, func() { l.reload(onChange) })
+			} else {
+				debounce.Reset(settle)
+			}
 		case err, ok := <-watcher.Errors:
 			if !ok {
 				return

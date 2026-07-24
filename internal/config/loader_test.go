@@ -321,6 +321,53 @@ func TestNewLoaderRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+// An atomic save — write a temp file, rename it over the config — is how most
+// editors write, and it arrives as REMOVE+CREATE with no WRITE. The watcher
+// must still pick it up; a file-level, WRITE-only watch used to drop it and the
+// running bot never saw the edit.
+func TestWatcherReloadsOnAtomicSave(t *testing.T) {
+	dir := t.TempDir()
+	changed := make(chan Settings, 1)
+	l, _, err := NewLoader(dir, "229948970904846336", "someone", nil, func(_, new Settings) {
+		select {
+		case changed <- new:
+		default:
+		}
+	})
+	if err != nil {
+		t.Fatalf("NewLoader: %v", err)
+	}
+	if l.Get().Prefix != "w" {
+		t.Fatalf("prefix = %q, want the default before the edit", l.Get().Prefix)
+	}
+
+	// The watcher goroutine registers its directory watch asynchronously; give
+	// it a moment so the edit below is not missed for having landed first. A
+	// real user edits seconds later, so production never hits this window.
+	time.Sleep(500 * time.Millisecond)
+
+	// Write to a sibling temp file and rename it over the config, exactly as an
+	// atomic-saving editor does. The temp file lives in the watched directory,
+	// so the watcher must ignore it and react only to the rename of the config.
+	body := []byte(`{"schemaVersion":2,"discord":{"prefix":"owo"}}`)
+	tmp := filepath.Join(dir, ".229948970904846336.json.tmp")
+	if err := os.WriteFile(tmp, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmp, l.Path()); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case got := <-changed:
+		if got.Prefix != "owo" {
+			t.Errorf("reloaded prefix = %q, want %q", got.Prefix, "owo")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("watcher did not reload after an atomic save")
+	}
+}
+
 // unwatchedLoader is a Loader over a real file with no watcher goroutine. The
 // reload tests below drive reload() by hand; going through NewLoader would leave
 // its watcher racing them for the same edit, and whichever won would decide
