@@ -543,6 +543,16 @@
           },
           "type": "object"
         },
+        "mentionLog": {
+          "additionalProperties": false,
+          "description": "MentionLog records every raw OwO message addressed to this account to var/data/{id}_mentions.log as a JSON array. Off by default.",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "pray": {
           "additionalProperties": false,
           "description": "TargetedFeature is a scheduled command aimed at another user (\"\" = self).",
