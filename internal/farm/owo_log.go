@@ -19,7 +19,15 @@ var (
 	huntFoundRe          = regexp.MustCompile(`(?i)you found:\s*(.+)`)
 	// :bug:! → bug — strip the shortcode colons and the trailing "!" OwO adds
 	// after the caught animal, so the log reads "caught a common bug".
-	huntEmojiRe    = regexp.MustCompile(`:([a-z0-9_]+):!?`)
+	huntEmojiRe = regexp.MustCompile(`:([a-z0-9_]+):!?`)
+	// HuntBot's completion push: "I AM BACK WITH 598 ANIMALS, 4725 ESSENCE, AND
+	// 5512 EXPERIENCE". [\d,]+ because OwO comma-groups large essence/xp totals;
+	// [\s|]* spans the line break plus the "|" left by each row's stripped
+	// separator, since OwO wraps the header across two lines.
+	huntbotReturnRe = regexp.MustCompile(`I AM BACK WITH ([\d,]+) ANIMALS,[\s|]*([\d,]+) ESSENCE, AND ([\d,]+) EXPERIENCE`)
+	// :bee:⁶⁵ → animal shortcode + its superscript count, which sits flush
+	// against the closing colon with no space.
+	huntbotCatchRe = regexp.MustCompile(`:([a-z0-9_]+):([⁰¹²³⁴⁵⁶⁷⁸⁹]+)`)
 	battleResultRe = regexp.MustCompile(`(?i)you (won|lost) in (\d+) turns!`)
 	// [\d,]+ because OwO comma-groups anything from 1,000 up; \d+ silently
 	// failed to match the whole pattern and dropped the xp from the summary.
@@ -129,6 +137,31 @@ func extractHuntBody(clean string) string {
 	return strings.TrimSpace(clean[idx:])
 }
 
+// summarizeHuntbotReturn turns OwO's HuntBot completion push into
+// "Huntbot → received 598 ANIMALS, 4725 ESSENCE, AND 5512 EXPERIENCE:
+// bee (x65), snail (x75), …". stripDiscordText drops the <:common:id> rarity
+// markers and the <:rbot:id>/<:blank:id> decorations and the backticks while
+// leaving OwO's :bee: shortcodes intact; SuperscriptToNumber decodes the ⁶⁵
+// counts. Returns "" when neither the header nor any catch is recognised.
+func summarizeHuntbotReturn(content string) string {
+	clean := stripDiscordText(content)
+	summary := "Huntbot → received"
+	if m := huntbotReturnRe.FindStringSubmatch(clean); len(m) > 3 {
+		summary += " " + m[1] + " ANIMALS, " + m[2] + " ESSENCE, AND " + m[3] + " EXPERIENCE"
+	}
+	var parts []string
+	for _, c := range huntbotCatchRe.FindAllStringSubmatch(clean, -1) {
+		parts = append(parts, c[1]+" (x"+strconv.Itoa(util.SuperscriptToNumber(c[2]))+")")
+	}
+	if len(parts) > 0 {
+		summary += ": " + strings.Join(parts, ", ")
+	}
+	if summary == "Huntbot → received" {
+		return ""
+	}
+	return summary
+}
+
 // summarizeOwOMessage returns a short one-line summary for OwO bot replies.
 // Returns "" when the message is handled elsewhere or not worth logging.
 func summarizeOwOMessage(content, nick string) string {
@@ -151,6 +184,15 @@ func summarizeOwOMessage(content, nick string) string {
 
 	if battleResultRe.MatchString(content) {
 		return summarizeBattle(content)
+	}
+
+	// HuntBot's "I AM BACK WITH …" completion push carries no nick, no "caught"
+	// and no "You found:", so it fell through to the generic fallback (dropped
+	// for lack of a nick). Summarize it before those paths — it can't collide.
+	if strings.Contains(content, "I AM BACK WITH") {
+		if s := summarizeHuntbotReturn(content); s != "" {
+			return s
+		}
 	}
 
 	// OwO's essence catches read "…spent 5 and caught a common :bug:! | gained

@@ -16,6 +16,7 @@ type fakeBot struct {
 
 func (f *fakeBot) HuntChannelID() string             { return "hunt" }
 func (f *fakeBot) OwoBotID() string                  { return "owo" }
+func (f *fakeBot) OwnUserID() string                 { return "111" }
 func (f *fakeBot) Nickname() string                  { return "tester" }
 func (f *fakeBot) Settings() config.Huntbot          { return f.settings }
 func (f *fakeBot) RandomPrefix(cmds []string) string { return "owo " + cmds[0] }
@@ -88,6 +89,63 @@ func TestResendFollowsBackInMessage(t *testing.T) {
 		t.Fatalf("slept = %v, want first delay of %v", f.slept, want)
 	}
 	wantPair(t, f.sent)
+}
+
+// The completion push re-opens HuntBot even though it carries no nick and, in
+// this case, no ping at all: channel+author already scope it to this account.
+func TestReturnPushResendsWithAmount(t *testing.T) {
+	f := newFake()
+	h := NewHandler(f, "token")
+
+	h.HandleMessage(Message{
+		ChannelID: "hunt",
+		AuthorID:  "owo",
+		Content:   "BEEP BOOP. I AM BACK WITH 598 ANIMALS, 4725 ESSENCE, AND 5512 EXPERIENCE",
+	})
+
+	if len(f.slept) == 0 || f.slept[0] != briefCooldownMin {
+		t.Fatalf("slept = %v, want first delay of %v", f.slept, briefCooldownMin)
+	}
+	wantPair(t, f.sent)
+}
+
+// A push arriving inside the pairEcho window is the answer to a resend that
+// already went out (the remaining-time timer beat the push to it), so it must
+// not queue a second pair.
+func TestReturnPushAfterPairDoesNotResend(t *testing.T) {
+	f := newFake()
+	h := NewHandler(f, "token")
+
+	h.HandleMessage(Message{
+		ChannelID: "hunt",
+		AuthorID:  "owo",
+		Content:   "tester I WILL BE BACK IN **10M**",
+	})
+	wantPair(t, f.sent)
+
+	h.HandleMessage(Message{
+		ChannelID: "hunt",
+		AuthorID:  "owo",
+		Content:   "BEEP BOOP. I AM BACK WITH 1 ANIMALS, 1 ESSENCE, AND 1 EXPERIENCE",
+	})
+	wantPair(t, f.sent)
+}
+
+// A push whose only ping is another account must not cross-trigger a resend
+// when several accounts share one hunt channel.
+func TestReturnPushForAnotherAccountIgnored(t *testing.T) {
+	f := newFake()
+	h := NewHandler(f, "token")
+
+	h.HandleMessage(Message{
+		ChannelID: "hunt",
+		AuthorID:  "owo",
+		Content:   "<@999> BEEP BOOP. I AM BACK WITH 1 ANIMALS, 1 ESSENCE, AND 1 EXPERIENCE",
+	})
+
+	if len(f.sent) != 0 {
+		t.Fatalf("sent = %v, want nothing for another account's return push", f.sent)
+	}
 }
 
 // The bare command only prints HuntBot's status, so a resend that stops there

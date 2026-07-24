@@ -68,6 +68,10 @@ type Command struct {
 type BotContext interface {
 	HuntChannelID() string
 	OwoBotID() string
+	// OwnUserID is this account's Discord user ID, used to tell a HuntBot return
+	// push addressed to this account from one meant for another account sharing
+	// the channel. "" when the client isn't ready yet.
+	OwnUserID() string
 	Nickname() string
 	Settings() config.Huntbot
 	RandomPrefix(commands []string) string
