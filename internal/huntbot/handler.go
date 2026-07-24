@@ -13,6 +13,9 @@ import (
 var (
 	passwordResetRe = regexp.MustCompile(`Password will reset in (\d+)`)
 	huntbotTimeRe   = regexp.MustCompile(`(\d+)([DHM])`)
+	// mentionRe matches a Discord user ping, `<@id>` or `<@!id>`, so a return
+	// push meant for another account in a shared channel can be told apart.
+	mentionRe       = regexp.MustCompile(`<@!?(\d+)>`)
 	levelProgressRe = regexp.MustCompile(`Lvl (\d+) \[(\d+)/\d+\]`)
 	essenceRe       = regexp.MustCompile(`Animal Essence - ` + "`" + `(\d{1,3}(?:,\d{3})*)` + "`")
 )
@@ -92,6 +95,14 @@ func (h *Handler) HandleMessage(msg Message) {
 	}
 	content := msg.Content
 
+	// HuntBot's completion push ("BEEP BOOP. I AM BACK WITH …") is not guaranteed
+	// to carry the nick, so it is matched outside the nick block. addressedToMe
+	// keeps it from firing on another account's push in a shared channel.
+	if strings.Contains(content, "I AM BACK WITH") && h.addressedToMe(content) {
+		h.handleReturn()
+		return
+	}
+
 	if strings.Contains(content, nick) {
 		switch {
 		case strings.Contains(content, "You successfully upgraded"):
@@ -149,8 +160,37 @@ func (h *Handler) HandleMessage(msg Message) {
 			continue
 		}
 		h.startAfter(briefCooldownMin)
-		h.bot.Log("huntbot back! sending next huntbot command.")
+		h.bot.Log("Huntbot → back! sending next command.")
 	}
+}
+
+// addressedToMe reports whether a HuntBot return push is for this account. The
+// channel+author guard already narrows it to OwO in this account's hunt
+// channel; this additionally rejects a push whose only pings are *other*
+// accounts, so a shared channel doesn't cross-trigger. A push that pings this
+// account, names the nick, or pings nobody is treated as ours.
+func (h *Handler) addressedToMe(content string) bool {
+	own := h.bot.OwnUserID()
+	if own != "" && strings.Contains(content, own) {
+		return true
+	}
+	if nick := h.bot.Nickname(); nick != "" && strings.Contains(content, nick) {
+		return true
+	}
+	return len(mentionRe.FindStringSubmatch(content)) == 0
+}
+
+// handleReturn fires when OwO pushes "I AM BACK WITH …": HuntBot is now idle, so
+// re-open it right away. This is a safety net over resendAfterRemaining — the
+// remaining-time sleep is cancelled by any status embed, so the push is the
+// reliable cue. pairEcho guards the case where that timer already resent, and
+// CancelSleep aborts a still-pending one so the two can't both fire.
+func (h *Handler) handleReturn() {
+	if h.pairEcho() {
+		return
+	}
+	h.bot.CancelSleep()
+	h.resendAfter(briefCooldownMin)
 }
 
 func (h *Handler) handlePassword(msg Message) {
@@ -159,10 +199,10 @@ func (h *Handler) handlePassword(msg Message) {
 	}
 	ans, err := SolvePasswordCaptcha(msg.Attachments[0].URL, h.token)
 	if err != nil || ans == "" {
-		h.bot.Log("huntbot password solve failed")
+		h.bot.Log("Huntbot → password solve failed")
 		return
 	}
-	h.bot.Log("huntbot received password, attempting to solve!")
+	h.bot.Log("Huntbot → received password, attempting to solve!")
 	h.bot.SleepUntil(briefCooldownMin, briefCooldownMax-briefCooldownMin)
 	h.sendAutohunt(ans, true)
 }
@@ -174,7 +214,7 @@ func (h *Handler) handlePasswordRetry(content string) {
 			secs = float64(v * 60)
 		}
 	}
-	h.bot.Log("huntbot stuck in password, retrying")
+	h.bot.Log("Huntbot → stuck in password, retrying")
 	// The password prompt answers an amount-carrying command, so the retry
 	// carries the amount too rather than re-opening the exchange.
 	h.startAfter(secs)
@@ -185,12 +225,12 @@ func (h *Handler) handlePasswordRetry(content string) {
 // not be parsed, so fall back to a short jittered retry instead of hammering.
 func (h *Handler) resendAfterRemaining(secs int) {
 	if secs <= 0 {
-		h.bot.Log("huntbot remaining time unreadable, retrying shortly")
+		h.bot.Log("Huntbot → remaining time unreadable, retrying shortly")
 		h.resendAfter(briefCooldownMin)
 		return
 	}
 	delay := float64(secs) + resendPadding
-	h.bot.Log("huntbot will be back in " + strconv.Itoa(secs) + "s, resending in " + strconv.Itoa(int(delay)) + "s")
+	h.bot.Log("Huntbot → will be back in " + strconv.Itoa(secs) + "s, resending in " + strconv.Itoa(int(delay)) + "s")
 	if !h.bot.SleepUntil(delay, 0) {
 		return
 	}

@@ -139,6 +139,12 @@ func (c *huntbotCtx) OwoBotID() string {
 	}
 	return c.bot.settings().OwoBotID
 }
+func (c *huntbotCtx) OwnUserID() string {
+	if c == nil || c.bot == nil {
+		return ""
+	}
+	return c.bot.userID()
+}
 func (c *huntbotCtx) Nickname() string {
 	if c == nil || c.bot == nil {
 		return ""

@@ -17,7 +17,18 @@ var (
 	markdownCodeRe       = regexp.MustCompile("`([^`]+)`")
 	unicodeEmojiNameRe   = regexp.MustCompile(`:([a-z0-9_]+):`)
 	huntFoundRe          = regexp.MustCompile(`(?i)you found:\s*(.+)`)
-	battleResultRe       = regexp.MustCompile(`(?i)you (won|lost) in (\d+) turns!`)
+	// :bug:! → bug — strip the shortcode colons and the trailing "!" OwO adds
+	// after the caught animal, so the log reads "caught a common bug".
+	huntEmojiRe = regexp.MustCompile(`:([a-z0-9_]+):!?`)
+	// HuntBot's completion push: "I AM BACK WITH 598 ANIMALS, 4725 ESSENCE, AND
+	// 5512 EXPERIENCE". [\d,]+ because OwO comma-groups large essence/xp totals;
+	// [\s|]* spans the line break plus the "|" left by each row's stripped
+	// separator, since OwO wraps the header across two lines.
+	huntbotReturnRe = regexp.MustCompile(`I AM BACK WITH ([\d,]+) ANIMALS,[\s|]*([\d,]+) ESSENCE, AND ([\d,]+) EXPERIENCE`)
+	// :bee:⁶⁵ → animal shortcode + its superscript count, which sits flush
+	// against the closing colon with no space.
+	huntbotCatchRe = regexp.MustCompile(`:([a-z0-9_]+):([⁰¹²³⁴⁵⁶⁷⁸⁹]+)`)
+	battleResultRe = regexp.MustCompile(`(?i)you (won|lost) in (\d+) turns!`)
 	// [\d,]+ because OwO comma-groups anything from 1,000 up; \d+ silently
 	// failed to match the whole pattern and dropped the xp from the summary.
 	battleXpRe          = regexp.MustCompile(`([+-][\d,]+)\s*xp`)
@@ -80,6 +91,77 @@ func formatAnimalList(raw string) string {
 	return strings.Join(parts, ", ")
 }
 
+// isHuntCatchMessage matches OwO's modern essence-catch reply, e.g.
+// "…spent 5 and caught a common :bug:! | gained 1xp!". It deliberately does not
+// fire on the older "You found:" reply, which keeps its own animal-list summary.
+func isHuntCatchMessage(content string) bool {
+	if strings.Contains(content, "You found:") {
+		return false
+	}
+	return strings.Contains(strings.ToLower(content), "caught")
+}
+
+// summarizeHuntCatch turns a modern catch reply into
+// "Hunt → spent 5 and caught a common bug | gained 1xp!". stripDiscordText
+// removes the "🌱 | name" prefix decorations, the <:custom:id> emojis and the
+// bold/backtick markup; we keep only the clause from "spent"/"caught" onward so
+// the log drops the leading name and any empowerment banner, then flatten the
+// ":bug:!" shortcode down to "bug".
+func summarizeHuntCatch(content string) string {
+	clean := stripDiscordText(content)
+	body := extractHuntBody(clean)
+	if body == "" {
+		return ""
+	}
+	// ":bug:!" → "bug": drop the colons and the "!" OwO puts right after the
+	// caught animal, while leaving the "!" on "gained 1xp!" alone.
+	body = huntEmojiRe.ReplaceAllString(body, "$1")
+	body = strings.Join(strings.Fields(body), " ")
+	return "Hunt → " + body
+}
+
+// extractHuntBody returns the cleaned message from the first "spent " or
+// "caught " keyword onward, so the prefix ("🌱 | name") is dropped without
+// having to know the account nick.
+func extractHuntBody(clean string) string {
+	lower := strings.ToLower(clean)
+	idx := -1
+	for _, kw := range []string{"spent ", "caught "} {
+		if i := strings.Index(lower, kw); i >= 0 && (idx == -1 || i < idx) {
+			idx = i
+		}
+	}
+	if idx == -1 {
+		return ""
+	}
+	return strings.TrimSpace(clean[idx:])
+}
+
+// summarizeHuntbotReturn turns OwO's HuntBot completion push into
+// "Huntbot → received 598 ANIMALS, 4725 ESSENCE, AND 5512 EXPERIENCE:
+// bee (x65), snail (x75), …". stripDiscordText drops the <:common:id> rarity
+// markers and the <:rbot:id>/<:blank:id> decorations and the backticks while
+// leaving OwO's :bee: shortcodes intact; SuperscriptToNumber decodes the ⁶⁵
+// counts. Returns "" when neither the header nor any catch is recognised.
+func summarizeHuntbotReturn(content string) string {
+	clean := stripDiscordText(content)
+	summary := "Huntbot → received"
+	if m := huntbotReturnRe.FindStringSubmatch(clean); len(m) > 3 {
+		summary += " " + m[1] + " ANIMALS, " + m[2] + " ESSENCE, AND " + m[3] + " EXPERIENCE"
+	}
+	var parts []string
+	for _, c := range huntbotCatchRe.FindAllStringSubmatch(clean, -1) {
+		parts = append(parts, c[1]+" (x"+strconv.Itoa(util.SuperscriptToNumber(c[2]))+")")
+	}
+	if len(parts) > 0 {
+		summary += ": " + strings.Join(parts, ", ")
+	}
+	if summary == "Huntbot → received" {
+		return ""
+	}
+	return summary
+}
+
 // summarizeOwOMessage returns a short one-line summary for OwO bot replies.
 // Returns "" when the message is handled elsewhere or not worth logging.
 func summarizeOwOMessage(content, nick string) string {
@@ -102,6 +184,26 @@ func summarizeOwOMessage(content, nick string) string {
 
 	if battleResultRe.MatchString(content) {
 		return summarizeBattle(content)
+	}
+
+	// HuntBot's "I AM BACK WITH …" completion push carries no nick, no "caught"
+	// and no "You found:", so it fell through to the generic fallback (dropped
+	// for lack of a nick). Summarize it before those paths — it can't collide.
+	if strings.Contains(content, "I AM BACK WITH") {
+		if s := summarizeHuntbotReturn(content); s != "" {
+			return s
+		}
+	}
+
+	// OwO's essence catches read "…spent 5 and caught a common :bug:! | gained
+	// 1xp!" and carry no "You found:" line, so they fell through to the generic
+	// fallback that only strips <:custom:id> emojis — leaving the bare ":bug:!"
+	// in the log. Handle them before the "You found:" path and keep OwO's own
+	// :shortcode: names intact.
+	if isHuntCatchMessage(content) {
+		if s := summarizeHuntCatch(content); s != "" {
+			return s
+		}
 	}
 
 	if strings.Contains(content, "You found:") || strings.Contains(content, ", hunt") {
